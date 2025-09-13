@@ -1,0 +1,59 @@
+{
+  "timestamp": "2025-01-20T11:15:00Z",
+  "project_path": "/Users/vinnie/github/kina",
+  "input_source": ".claudio/shared/agents_tracking.json",
+  "discovery_source": ".claudio/docs/discovery.md",
+  "discovery_drivers": {
+    "technology_stack": ["rust", "kubernetes", "apple_container", "cli", "cargo"],
+    "architecture": "cli_application",
+    "project_domain": "container_orchestration",
+    "development_stage": "planning",
+    "target_platform": "macos"
+  },
+  "contexts_generated": [
+    ".claude/agents/claudio/extended_context/workflow/discovery/overview.md",
+    ".claude/agents/claudio/extended_context/workflow/discovery/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/workflow/prd/overview.md",
+    ".claude/agents/claudio/extended_context/workflow/prd/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/workflow/planning/overview.md",
+    ".claude/agents/claudio/extended_context/workflow/planning/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/workflow/task/overview.md",
+    ".claude/agents/claudio/extended_context/workflow/task/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/development/quality/overview.md",
+    ".claude/agents/claudio/extended_context/development/quality/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/development/security/overview.md",
+    ".claude/agents/claudio/extended_context/development/security/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/documentation/overview/overview.md",
+    ".claude/agents/claudio/extended_context/documentation/overview/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/research/overview/overview.md",
+    ".claude/agents/claudio/extended_context/research/overview/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/templates/agents/overview.md",
+    ".claude/agents/claudio/extended_context/templates/agents/troubleshooting.md",
+    ".claude/agents/claudio/extended_context/templates/workflows/overview.md",
+    ".claude/agents/claudio/extended_context/templates/workflows/troubleshooting.md"
+  ],
+  "content_customizations": {
+    "rust_cli_development": "All contexts customized with Rust CLI patterns, cargo workspace management, clap/structopt integration, and assert_cmd testing approaches",
+    "apple_container_integration": "Context files include Apple Container research requirements, system privilege validation, and macOS platform-specific considerations",
+    "kubernetes_orchestration": "Contexts incorporate kube-rs/kubernetes-rs client library evaluation, cluster operation validation, and kubectl compatibility patterns",
+    "early_stage_project": "All contexts account for planning-stage project with research requirements and prototype development needs"
+  },
+  "agent_requirements_satisfied": {
+    "discovery_agent": ["workflow/discovery/"],
+    "prd_agent": ["workflow/prd/"],
+    "plan_agent": ["workflow/planning/"],
+    "task_agent": ["workflow/task/"],
+    "code_quality_analyzer": ["development/quality/"],
+    "security_review_coordinator": ["development/security/"],
+    "documentation_coordinator": ["documentation/overview/"],
+    "research_specialist": ["research/overview/"],
+    "all_agents": ["templates/agents/", "templates/workflows/"]
+  },
+  "generation_metadata": {
+    "total_contexts_required": 10,
+    "total_files_generated": 20,
+    "customization_drivers": ["rust", "apple_container", "kubernetes", "cli", "macos"],
+    "technology_focus": "rust_cli_container_orchestration",
+    "generation_completeness": "100%"
+  }
+}

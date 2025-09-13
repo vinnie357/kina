@@ -1,0 +1,82 @@
+{
+  "timestamp": "2025-01-20T11:00:00Z",
+  "project_path": "/Users/vinnie/github/kina",
+  "input_sources": {
+    "commands_tracking": ".claudio/shared/commands_tracking.json",
+    "actual_commands": ".claude/commands/claudio/",
+    "command_index": ".claude/commands/claudio/index.md",
+    "agent_index": "/Users/vinnie/github/kina/claudio/.claude/agents/claudio/index.md"
+  },
+  "discovery_source": ".claudio/docs/discovery.md",
+  "discovery_drivers": {
+    "technology_stack": ["rust", "kubernetes", "apple_container", "cli", "cargo"],
+    "architecture": "cli_application",
+    "project_domain": "container_orchestration",
+    "development_stage": "planning",
+    "target_platform": "macos"
+  },
+  "validation_status": {
+    "multi_source_validation": "complete",
+    "command_coverage": "94%",
+    "system_agents_filtered": 6,
+    "missing_templates": 0,
+    "broken_dependencies": 1,
+    "coverage_issues": {
+      "test_command_agent_mismatch": "test.md references 'kina-test-runner' but tracking shows 'project-test-runner' (system agent filtered)"
+    }
+  },
+  "agents_generated": [
+    "discovery-agent",
+    "prd-agent",
+    "plan-agent",
+    "task-agent",
+    "research-specialist",
+    "code-quality-analyzer",
+    "security-review-coordinator",
+    "security-threat-modeler",
+    "security-architecture-analyst",
+    "vulnerability-assessment-specialist",
+    "security-diagram-generator",
+    "documentation-coordinator",
+    "documentation-readme-creator",
+    "documentation-api-creator",
+    "documentation-user-guide-creator",
+    "documentation-developer-guide-creator",
+    "implement-agent",
+    "test-review"
+  ],
+  "system_agents_excluded": [
+    "discovery-structure-analyzer",
+    "discovery-tech-analyzer",
+    "discovery-architecture-analyzer",
+    "discovery-integration-analyzer",
+    "discovery-consolidator",
+    "project-test-runner"
+  ],
+  "localization_applied": {
+    "rust_cli_focus": "All agents customized with Rust CLI development patterns, clap/structopt framework integration, and Cargo workspace management",
+    "container_orchestration": "Apple Container and Docker compatibility patterns integrated across agents with macOS-specific considerations",
+    "kubernetes_integration": "kube-rs and kubernetes-rs client library patterns, RBAC configuration, and API usage examples",
+    "technology_examples": "Rust-specific error handling (anyhow, thiserror), CLI testing with assert_cmd, and container runtime API patterns"
+  },
+  "required_contexts": [
+    "workflow/discovery/",
+    "workflow/prd/",
+    "workflow/planning/",
+    "workflow/task/",
+    "development/quality/",
+    "development/security/",
+    "documentation/overview/",
+    "research/overview/",
+    "templates/agents/",
+    "templates/workflows/"
+  ],
+  "generation_metadata": {
+    "total_agents_required": 24,
+    "user_agents_generated": 18,
+    "system_agents_filtered": 6,
+    "localization_drivers": "rust_cli_application_container_orchestration_kubernetes",
+    "validation_coverage": "complete_with_minor_issues",
+    "command_compatibility": "functional_with_test_command_note"
+  }
+}
