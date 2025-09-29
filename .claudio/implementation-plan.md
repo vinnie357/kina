@@ -24,12 +24,22 @@ Team composition requires analysis including:
 ### Risk Summary
 Major risks include Apple Container capability limitations, Kubernetes ecosystem compatibility challenges, and macOS platform dependencies. Mitigation focuses on thorough research, iterative development, and maintaining compatibility with existing Kubernetes tooling.
 
+### Key Architecture Updates (Based on Research)
+**Apple Container VM-per-Container Architecture Discovery**:
+- Each container runs in dedicated lightweight Linux VM with automatic IP assignment
+- No explicit network management required (removes Docker-style networking complexity)
+- **VM Communication Limitation**: Inter-VM communication not available until macOS 26
+- **Single-Node Architecture**: Focus on single-node clusters with combined control-plane/worker roles
+- CLI compatibility: Apple Container uses `--name` for container naming, no `--hostname` or `--privileged` options
+- Self-contained VM environment eliminates need for host filesystem mounts
+
 ## Project Scope and Approach
 
 ### Implementation Strategy
 **Development Methodology**: Phased implementation with research-driven architecture decisions
 **Technology Focus**: Rust CLI application with Apple Container integration
 **Compatibility Target**: Maintain kind workflow compatibility while leveraging Apple Container benefits
+**Architectural Foundation**: Based on KIND's proven patterns including provider abstraction, phased cluster lifecycle, and modular package structure
 
 ### Development Methodology
 Iterative development with early validation of core assumptions through Apple Container research and prototyping. Each phase builds upon validated functionality from previous phases.
@@ -42,21 +52,34 @@ Distribution via standard macOS channels (Homebrew, GitHub releases) with proper
 
 ## Phase Breakdown
 
-### Phase 1: Foundation (Duration: Requires Estimation)
+### Phase 1: Foundation (Duration: 2-3 weeks)
 **Objectives**:
 - Establish core Rust project infrastructure
-- Complete research on Apple Container and kind compatibility
+- Complete research on Apple Container and kind compatibility (PRIORITY)
 - Set up development environment and tooling
 - Create basic project architecture
+- Implement testing framework for iterative development
 
 **Key Deliverables**:
-- Functional Rust project with Cargo.toml and initial structure
-- Comprehensive research documentation on Apple Container
-- Development environment setup with mise.toml
-- Initial CLI command structure design
+- Functional Rust project with Cargo.toml and modular structure (following KIND's package organization)
+- Comprehensive research documentation on Apple Container and KIND architectural patterns (BLOCKING)
+- Development environment setup with mise.toml and testing framework
+- Initial CLI command structure design based on KIND's command patterns
+- Container runtime abstraction layer design (Apple Container provider)
+- Testing infrastructure with mocks for Apple Container operations
 
 **Resources**: Requires analysis of available developers
 **Critical Success Factor**: Apple Container research must provide viable integration path
+
+**Immediate Implementation Fixes Required**:
+- Remove unsupported CLI options (`--hostname`, `--privileged`) from container creation
+- Remove network management functions (create_cluster_network, delete_cluster_network)
+- Remove host filesystem mounts (VMs are self-contained)
+- Update container inspection to parse VM IP addresses from JSON output
+- Use `--name` for container naming, leverage Apple Container automatic IP assignment
+- **Single-Node Architecture**: Focus on single-node clusters due to VM communication limits until macOS 26
+- **Modular Addon System**: Implement `kina install` command for post-cluster addon installation
+- **Clean Image Strategy**: Core kina-node image with minimal setup, addons installed via CLI commands
 
 ### Phase 2: Core Features (Duration: Requires Estimation)
 **Objectives**:
@@ -66,13 +89,53 @@ Distribution via standard macOS channels (Homebrew, GitHub releases) with proper
 - Establish container lifecycle management
 
 **Key Deliverables**:
-- Apple Container wrapper and abstraction layer
-- Basic cluster creation and deletion functionality
-- Core kina CLI commands operational
-- Container image and networking management
+- Apple Container provider implementation (single-node VM architecture, automatic IP assignment)
+- Single-node cluster lifecycle management (Create VM → Configure → Bootstrap)
+- Core kina CLI commands operational (`kina create`, `kina delete`, `kina list`, `kina install`)
+- Container lifecycle management using Apple Container supported CLI options only
+- kubeadm integration for single-node cluster initialization within VM
+- **Modular Addon System**: `kina install` commands for nginx-ingress, CNI, metrics-server
+- **VM-optimized Node Images**: Clean kina-node images with core Kubernetes stack only
 
 **Resources**: Requires analysis based on Apple Container API complexity
 **Dependencies**: Phase 1 research completion
+
+## Image Architecture Requirements
+
+### kindest/node vs Apple Container VM Architecture
+
+**kindest/node Design** (Docker shared kernel):
+- Assumes shared Linux kernel with host and other containers
+- Uses Docker-style networking with bridge networks
+- Relies on container runtime (containerd/Docker) managed by host
+- Filesystem layout optimized for namespace isolation
+
+**Apple Container VM Architecture** (VM-per-container):
+- Each container runs complete Linux VM with own kernel
+- Automatic VM networking with DNS resolution
+- Self-contained container runtime within VM
+- Full systemd support within VM environment
+
+### Custom Image Strategy
+
+**Base Image Approach**:
+- Start with kindest/node Dockerfiles as reference
+- Rebuild for VM-per-container with full Linux distribution
+- Ensure complete Kubernetes stack runs within single VM
+- Optimize for Apple Container DNS naming and networking
+
+**Key Image Requirements**:
+1. **Complete VM Environment**: Full systemd, kernel modules, VM-optimized networking
+2. **Self-contained Runtime**: containerd/cri-o installed and configured within VM
+3. **DNS Integration**: Configure for Apple Container DNS resolution between nodes
+4. **Kubernetes Components**: kubelet, kubeadm, kubectl pre-installed and configured
+5. **Network Configuration**: Optimized for VM-per-node instead of pod-per-container networking
+
+**Image Development Plan**:
+- Phase 2A: Create base VM image with Linux distribution + systemd
+- Phase 2B: Add Kubernetes components and container runtime
+- Phase 2C: Configure for Apple Container DNS and networking patterns
+- Phase 2D: Test multi-node cluster formation using custom images
 
 ### Phase 3: Advanced Features (Duration: Requires Estimation)
 **Objectives**:

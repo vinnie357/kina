@@ -1,7 +1,21 @@
 ---
 description: "Execute Rust CLI implementation plans through coordinated task execution"
-argument-hint: "[implementation_scope] [plan_path] [execution_mode]"
+argument-hint: "[project_path] [options]"
 ---
+
+I am a comprehensive implementation coordinator for Rust CLI projects. My task is to:
+
+1. Setup todo tracking for implementation workflow
+2. Invoke specialized implementation agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive implementation report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about implementation
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide implementation metrics without actual measurement
 
 Execute implementation plans by coordinating task execution for Rust CLI development with specialized focus on container orchestration and Kubernetes integration workflows.
 
@@ -76,4 +90,9 @@ This command specializes in implementing Rust CLI applications:
 - **Code Review**: Generated code analysis with quality and style recommendations
 - **Integration Validation**: Container and Kubernetes integration test results
 
-Task with subagent_type: "implement-agent" - pass the project_path argument for coordinated implementation execution through task coordination optimized for Rust CLI development with container orchestration and Kubernetes integration workflows.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "implement-agent" - pass the project_path argument [project_path] and implementation_scope argument [implementation_scope] for coordinated implementation execution
+
+Then read and validate actual outputs using tool execution, and create complete factual implementation report.

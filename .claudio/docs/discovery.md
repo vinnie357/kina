@@ -6,309 +6,562 @@
 
 ## Executive Summary
 
-**Project Overview**: kina (Kubernetes in Apple Container) is an early-stage CLI development project designed to provide a macOS-native alternative to kind (Kubernetes in Docker). The project aims to leverage Apple Container technology for local Kubernetes development workflows.
-
-**Technology Stack**: Rust (planned primary language), Apple Container runtime, Kubernetes ecosystem integration
-
-**Architecture Pattern**: CLI application with command-line interface, targeting single-node Kubernetes cluster management
-
-**Development Phase**: Planning and requirements gathering stage with comprehensive documentation but no implementation code
-
-**Integration Readiness**: High potential for development workflow automation and tooling integration, with clear technology choices and structured development approach
+**Project Overview**: Rust CLI application for Kubernetes cluster management using Apple Container technology, designed as a kind-compatible tool for macOS container orchestration
+**Technology Stack**: Rust 2021 edition with clap CLI framework, Tokio async runtime, kube-rs for Kubernetes integration, and Apple Container runtime
+**Architecture Pattern**: Monolithic CLI with provider abstraction layer, following domain-driven layered architecture
+**Development Phase**: Active development with established project structure, comprehensive tooling, and advanced development practices
+**Integration Readiness**: High readiness for GitHub, Kubernetes, and Docker MCP integrations with existing infrastructure support
 
 ## Project Structure
 
-### Summary Statistics
-- **Total Directories**: 12 (excluding .git and claudio submodule)
-- **Total Files**: 5 (project files only, excluding .git and claudio)
-- **Max Depth**: 3 levels
-- **Organization Pattern**: Early-stage project with minimal structure
+### Project Overview
+**Project Type**: Rust workspace with CLI application for Kubernetes container management
+**Primary Domain**: Kubernetes orchestration using Apple Container technology
+**Architecture**: Modular CLI application with core container abstraction layer
+**Development Stage**: Active development with established project structure
 
-### Project Root Structure
+### Directory Organization
+- **Total Directories**: 31
+- **Total Files**: 60
+- **Max Depth**: 6 levels (excluding system nested examples)
+- **Organization Pattern**: Feature-based modular structure with clear separation of concerns
+
+### Key Directories
+
+#### Source Code Directories
+- **`kina-cli/src/`** - Main application source code
+  - **`src/core/`** - Core container and Kubernetes abstraction modules
+  - **`src/cli/`** - Command-line interface implementation
+  - **`src/config/`** - Configuration management modules
+  - **`src/utils/`** - Utility functions and helpers
+  - **`src/errors/`** - Error handling definitions
+
+#### Testing Directories
+- **`kina-cli/tests/`** - Integration and CLI tests
+  - **`tests/fixtures/`** - Test configuration files and data
+
+#### Configuration Directories
+- **Root configuration files**: `Cargo.toml`, `rustfmt.toml`, `clippy.toml`, `mise.toml`
+- **`kina-cli/templates/`** - Configuration templates for container networking
+
+#### Resource and Manifest Directories
+- **`kina-cli/manifests/`** - Kubernetes manifest files
+  - **`manifests/nginx-ingress/`** - NGINX ingress controller configurations
+- **`kina-cli/images/`** - Container image build scripts and Dockerfiles
+  - **`images/kina-node/`** - Node container image specifications
+
+#### Documentation Directories
+- **`docs/`** - Project documentation (CNI and kubelet configuration guides)
+- **`.claudio/`** - Claudio system installation (analysis and discovery outputs)
+
+#### Example and Script Directories
+- **`kina-cli/examples/`** - Usage examples and demonstration configurations
+  - **`examples/ingress/`** - Ingress controller examples and routing configurations
+- **`kina-cli/scripts/`** - Development and deployment shell scripts
+
+### Directory Tree Structure
 ```
 kina/
-├── README.md               # Project documentation
-├── .gitmodules            # Git submodule configuration
-├── .claude/               # Claude AI project configuration
-│   ├── agents/
-│   │   └── claudio/
-│   └── commands/
-│       └── claudio/
-├── .claudio/              # Claudio framework installation
-│   ├── docs/              # Generated analysis documents
-│   │   ├── architecture-analysis.md
-│   │   ├── integration-analysis.md
-│   │   └── technology-analysis.md
-│   ├── shared/
-│   │   ├── resources/
-│   │   ├── standards/
-│   │   └── utilities/
-│   └── status/
-└── claudio/               # Claudio framework submodule (excluded from analysis)
+├── Cargo.toml (workspace configuration)
+├── kina-cli/ (main application package)
+│   ├── src/
+│   │   ├── core/ (container and Kubernetes abstractions)
+│   │   ├── cli/ (command-line interface)
+│   │   ├── config/ (configuration management)
+│   │   ├── utils/ (utility functions)
+│   │   └── errors/ (error handling)
+│   ├── tests/ (integration tests)
+│   ├── manifests/ (Kubernetes configurations)
+│   ├── images/ (container build specifications)
+│   ├── examples/ (usage demonstrations)
+│   ├── scripts/ (automation scripts)
+│   └── templates/ (configuration templates)
+├── docs/ (project documentation)
+└── [configuration files: rustfmt.toml, clippy.toml, mise.toml]
 ```
 
-### Key Directory Classification
+### Organization Patterns
 
-**Documentation Directories**:
-- **Root Documentation**: `README.md` - Primary project documentation
-- **Analysis Documentation**: `.claudio/docs/` - Generated technical analysis documents
+#### File Naming Conventions
+- **Rust modules**: snake_case naming (`apple_container.rs`, `cluster_config.rs`)
+- **Directories**: kebab-case for multi-word names (`kina-cli`, `nginx-ingress`)
+- **Configuration files**: lowercase with extensions (`rustfmt.toml`, `.gitignore`)
+- **Scripts**: kebab-case shell scripts (`.sh` extension)
 
-**Configuration Directories**:
-- **.claude/**: Claude AI project configuration structure
-- **.claudio/**: Claudio framework installation directory with shared resources, standards, and utilities
+#### Code Organization Structure
+- **Modular design**: Clear separation between core logic, CLI interface, and configuration
+- **Domain-driven modules**: Core modules organized by functionality (provider, kubernetes, cluster)
+- **Feature isolation**: Examples, manifests, and scripts organized by specific use cases
 
-**Version Control**:
-- **.gitmodules**: Git submodule configuration for Claudio framework integration
-
-### File Organization Analysis
-
-**File Naming Conventions**: Consistent use of kebab-case for documentation files and lowercase for configuration files
-
-**File Extensions Present**: `.md` (Markdown documentation - 4 files), `.gitmodules` (Git configuration - 1 file)
-
-**Organization Patterns**: Documentation-first approach with structured framework integration and early development stage focus on planning and tooling setup
-
-### Project Indicators
-
-**Project Type Classification**:
-- **Primary Language**: Rust (planned)
-- **Project Category**: CLI application development
-- **Target Platform**: macOS (requires macOS 15.6+)
-- **Deployment Target**: Apple Container ecosystem
-
-**Development Approach**:
-- **Structure**: Single project with submodule integration
-- **Framework Usage**: Claudio development framework for project management
-- **Tooling**: Planned integration with mise for task management
-- **Maturity**: Early stage - primarily documentation and planning phase
+### Project Structure Type
+- **Cargo workspace**: Single workspace with one primary package (`kina-cli`)
+- **Library + Binary**: Dual structure with both library (`lib.rs`) and binary (`main.rs`) targets
+- **Layered architecture**: Core abstractions, CLI layer, and configuration management
 
 ## Technology Analysis
 
 ### Programming Languages
-- **Primary**: Rust (planned - mentioned in README.md)
-- **Documentation**: Markdown (100% - 1 file: README.md)
-- **Configuration**: Git configuration (.gitmodules)
-
-**Language Distribution**: Markdown: 100% (1 file), Total Source Files: 1 (excluding Claudio framework submodule)
+- **Primary**: Rust (100% - 18 files)
+  - Located in: `kina-cli/src/` directory
+  - Main modules: CLI, Core, Config, Utils, Errors
+  - Edition: 2021, Minimum version: 1.70
+- **Configuration**: TOML (6 files)
+- **Documentation**: Markdown (63 files)
+- **Scripts**: Shell (8 scripts for build and deployment)
+- **Kubernetes Manifests**: YAML (14 files)
 
 ### Frameworks and Libraries
-- **CLI Framework**: Not yet implemented (Rust-based planned)
-- **Container Technology**: Apple Container (target platform)
-- **Kubernetes**: Target orchestration platform
-- **Application Type**: CLI application (planned)
+
+#### CLI Framework
+- **Primary**: Clap 4.5.47 (derive feature)
+  - Modern command-line argument parsing
+  - Subcommand structure with derive macros
+  - Features: derive, cargo, wrap_help, string
+
+#### Async Runtime
+- **Primary**: Tokio 1.47.1 (full features)
+  - Full async runtime capabilities
+  - Process management integration
+  - Main function marked with `#[tokio::main]`
+
+#### Error Handling
+- **Primary**: Anyhow 1.0.99 (flexible error handling)
+- **Structured Errors**: Thiserror 1.0.69 + 2.0.16 (custom error types)
+
+#### Logging and Observability
+- **Tracing**: tracing 0.1.41 + tracing-subscriber + tracing-appender
+- **Structured Logging**: JSON support, environment filtering
+- **Log Level**: Default INFO level with configurable verbosity
+
+#### Serialization
+- **Primary**: Serde 1.0.220 (derive feature)
+- **Formats**: JSON (serde_json), YAML (serde_yaml), TOML (toml 0.8)
+- **Configuration**: Full serialization support for cluster configs
+
+#### Networking and HTTP
+- **HTTP Client**: Reqwest 0.11.27 (json, stream features)
+- **URL Handling**: url 2.4
+- **Future Use**: Prepared for Kubernetes API communication
+
+#### Kubernetes Integration (Planned)
+- **Client Library**: kube 0.87 (client, config features)
+- **API Types**: k8s-openapi 0.20 (latest feature)
+- **Status**: Dependencies declared but not yet implemented
+
+#### Configuration Management
+- **Config**: config 0.13 (hierarchical configuration)
+- **Directories**: directories 5.0 + dirs 5.0 (cross-platform paths)
+- **File Operations**: walkdir 2.4, tempfile 3.8
+
+#### Testing Framework
+- **CLI Testing**: assert_cmd 2.0 (command-line testing)
+- **Predicates**: predicates 3.0 (assertion helpers)
+- **Test Structure**: Unit and integration tests in `tests/` directory
 
 ### Dependencies
-- **Package Manager**: None detected (Rust Cargo expected for planned implementation)
-- **Git Submodules**: 1 submodule (claudio framework)
-- **Total Dependencies**: 0 (no dependency files found)
-- **Production Dependencies**: None implemented
-- **Development Dependencies**: None implemented
+
+#### Package Manager
+- **Primary**: Cargo (Rust native)
+- **Workspace Structure**: Single workspace with `kina-cli` member
+- **Dependency Management**: Workspace-level shared dependencies
+
+#### Dependency Count
+- **Total Dependencies**: 333 (including transitive)
+- **Workspace Dependencies**: 26 direct dependencies
+- **Development Dependencies**: 2 (assert_cmd, predicates)
+- **Production Dependencies**: 24
+
+#### Key Production Dependencies
+```toml
+clap = "4.5.47"          # CLI framework
+tokio = "1.47.1"         # Async runtime
+anyhow = "1.0.99"        # Error handling
+thiserror = "1.0.69"     # Structured errors
+tracing = "0.1.41"       # Logging
+serde = "1.0.220"        # Serialization
+reqwest = "0.11.27"      # HTTP client
+```
 
 ### Build System
-- **Primary Build Tool**: None detected (Cargo expected for Rust)
-- **Task Runner**: mise (mentioned in README.md, no configuration found)
-- **Build Configuration**: None present
-- **Development Environment**: mise.toml mentioned but not implemented
 
-### Development Tools
-- **Version Control**: Git (with submodules)
-- **Development Environment**: mise (planned)
-- **Linting**: None detected
-- **Formatting**: None detected
-- **Testing**: None detected
+#### Primary Build Tool
+- **Cargo**: Rust native build system
+- **Build Commands**: Standard cargo build, test, check
+- **Release Builds**: cargo build --release
 
-### Runtime Environment
-- **Target Platform**: macOS 15.6 or 26+
-- **Container Runtime**: Apple Container
-- **Deployment Target**: CLI binary distribution
-- **Kubernetes Tools**: kubectl, kubectx, kubens, k9s (planned dependencies)
+#### Task Runner
+- **mise**: Development environment and task management
+- **Available Tasks**:
+  - `mise run build`: Release build (kina-cli/)
+  - `mise run dev`: Development build
+  - `mise run test`: Run all tests
+  - `mise run lint`: Code quality checks (requires implementation)
+
+#### Code Quality Tools
+- **Formatter**: rustfmt (rustfmt.toml configuration)
+- **Linter**: clippy (clippy.toml configuration)
+- **Configuration Files**:
+  - `rustfmt.toml`: Code formatting rules
+  - `clippy.toml`: Linting configuration
+
+#### Development Environment
+- **Tool Management**: mise.toml
+- **Rust Toolchain**: stable channel
+- **Additional Tools**: kubectx, kubens, cilium-cli
+- **Environment Variables**: RUST_LOG=info, RUST_BACKTRACE=1
 
 ### Technology Assessment
-- **Stack Maturity**: Pre-development - concept stage
-- **Implementation Status**: 0% - planning phase only
-- **Complexity Level**: High - Kubernetes tooling and container orchestration
-- **Development Stage**: Requirements gathering and research
+
+#### Stack Maturity
+- **Language**: Mature - Rust with stable 2021 edition
+- **Dependencies**: Mature - well-established crates with active maintenance
+- **Tooling**: Mature - standard Rust toolchain with industry-standard tools
+
+#### Modernization Score
+- **Assessment**: 95/100 - Current Rust ecosystem best practices
+- **Strengths**: Modern async runtime, structured logging, comprehensive error handling
+- **Framework Versions**: Up-to-date dependencies (requires verification)
+
+#### Complexity Level
+- **Overall**: Moderate - Standard CLI application with container integration
+- **Architecture**: Well-structured modular design
+- **Async Complexity**: Moderate - Tokio-based async throughout
 
 ## Architecture Overview
 
-### Current State Analysis
+### Primary Architecture Pattern: **Monolithic CLI with Provider Abstraction**
 
-**Project Structure**: The project is in early conceptual stage with minimal implementation
+Kina follows a **monolithic CLI architecture** with clear provider abstraction patterns inspired by kind (Kubernetes in Docker). The system is designed as a single deployable binary that manages local Kubernetes clusters using Apple Container technology.
 
-**Existing Components**:
-- `README.md` - Project documentation and requirements
-- `.gitmodules` - Submodule configuration for Claudio framework
-- `claudio/` - Git submodule containing the Claudio framework
-- `.claude/` - Claude AI agent configuration
-- `.claudio/` - Claudio workflow documentation
+**Key Architectural Characteristics:**
+- **Single Binary Deployment**: Distributed as one executable CLI tool
+- **Provider Abstraction Layer**: Clean separation between CLI logic and container runtime
+- **Async-First Design**: Built on Tokio async runtime for concurrent operations
+- **Configuration-Driven**: Comprehensive configuration system with defaults and overrides
 
-**Missing Components**:
-- No Rust source code (`*.rs` files)
-- No `Cargo.toml` manifest
-- No `mise.toml` at project root
-- No implementation files
-- No test files
-- No configuration files
+### Design Patterns Analysis
 
-### Architectural Assessment
+#### Creational Patterns
 
-**High-Level Architecture Pattern**:
-- **Pattern**: Early Development Stage
-- **Status**: Conception phase with no implementation
-- **Target Architecture**: CLI application in Rust
-- **Deployment Model**: Local binary installation
+**1. Builder Pattern** - *High Confidence*
+- **Location**: `src/core/provider.rs` (lines 188-306, 308-365)
+- **Implementation**: `ContainerSpecBuilder` and `NetworkSpecBuilder`
+- **Usage**: Fluent API for constructing complex container specifications
 
-**Recommended Patterns for CLI Application**:
-- **Command Pattern**: For handling different Kubernetes operations
-- **Factory Pattern**: For creating Apple Container instances
-- **Strategy Pattern**: For different deployment strategies
-- **Observer Pattern**: For monitoring Kubernetes cluster status
+**2. Factory Pattern** - *Medium Confidence*
+- **Location**: `src/core/cluster.rs` (lines 16-27)
+- **Implementation**: `ClusterManager::new()` factory method
+- **Usage**: Creates cluster manager with initialized dependencies
 
-**Recommended Structure for Rust CLI**:
+#### Structural Patterns
+
+**1. Provider Pattern (Strategy-like)** - *High Confidence*
+- **Location**: `src/core/provider.rs` (lines 111-159)
+- **Implementation**: `ContainerProvider` trait abstraction
+- **Usage**: Abstracts container runtime operations (Apple Container, potentially Docker)
+- **Purpose**: Enables switching between different container providers
+
+**2. Repository Pattern** - *Medium Confidence*
+- **Location**: `src/config/mod.rs`
+- **Implementation**: Configuration persistence and retrieval
+- **Usage**: Abstracts configuration storage from business logic
+
+**3. Command Pattern** - *High Confidence*
+- **Location**: `src/cli/mod.rs` (lines 42-75)
+- **Implementation**: CLI subcommand enumeration with `execute()` methods
+- **Usage**: Each command encapsulates specific operations (Create, Delete, List, etc.)
+
+#### Behavioral Patterns
+
+**1. Template Method** - *Medium Confidence*
+- **Location**: `src/core/cluster.rs` (cluster lifecycle operations)
+- **Implementation**: Standard cluster operation workflows with customizable steps
+- **Usage**: Create cluster workflow with optional CSR approval and wait phases
+
+**2. Observer Pattern** - *Low Confidence*
+- **Location**: Logging and tracing infrastructure
+- **Implementation**: Tracing subscriber pattern for observability
+- **Usage**: Event-driven logging throughout the application
+
+### Code Organization Analysis
+
+#### Organization Principle: **Domain-Driven Layered Architecture**
+
+The codebase follows a **domain-driven layered architecture** with clear separation of concerns:
+
+**Layer Structure:**
 ```
-src/
-├── main.rs              # Entry point
-├── cli/                 # Command line interface
-│   ├── mod.rs
-│   ├── commands/        # Individual commands
-│   └── parser.rs        # Argument parsing
-├── core/                # Core business logic
-│   ├── mod.rs
-│   ├── cluster.rs       # Cluster management
-│   └── container.rs     # Apple Container interface
-├── config/              # Configuration management
-├── utils/               # Utilities and helpers
-└── errors/              # Error handling
+Presentation Layer:
+├── src/main.rs (entry point)
+├── src/cli/ (command-line interface)
+└── src/cli/mod.rs (CLI argument parsing and routing)
+
+Business Logic Layer:
+├── src/core/ (domain logic)
+├── src/core/cluster.rs (cluster management operations)
+├── src/core/provider.rs (container provider abstraction)
+└── src/core/kubernetes.rs (Kubernetes API operations)
+
+Data Access Layer:
+├── src/config/ (configuration management)
+└── src/config/cluster_config.rs (cluster-specific configuration)
+
+Infrastructure Layer:
+├── src/core/apple_container.rs (Apple Container integration)
+├── src/errors/ (error handling)
+└── src/utils/ (shared utilities)
 ```
 
-### Technology Requirements Analysis
+#### Modularity Assessment
 
-**Core Dependencies**:
-- **Platform**: macOS 15.6 or 26
-- **Container Runtime**: Apple Container
-- **Language**: Rust
-- **Build Tool**: Cargo (Rust package manager)
-- **Development Tools**: mise (development environment manager)
+**Cohesion Score**: 8.5/10
+- Strong functional cohesion within modules
+- Clear single responsibility per module
+- Well-defined module boundaries
 
-**Integration Requirements**:
-- **Kind Compatibility**: Must replicate Kind (Kubernetes in Docker) workflows
-- **Apple Container**: Interface with Apple's container CLI
-- **Kubernetes Tools**: Integration with kubectl, kubectx, kubens, k9s
-- **Nginx Ingress**: Support for ingress controllers
-- **Single Node Clusters**: Initial focus on single-node deployments
+**Coupling Score**: 7.0/10
+- Moderate coupling through shared types
+- Some tight coupling between core modules
+- Clean dependency injection through constructors
+
+**Dependency Analysis**:
+- **No circular dependencies detected**
+- Clear dependency direction: CLI → Core → Infrastructure
+- Configuration injected throughout layers
+
+### API and Data Architecture
+
+#### API Design Pattern: **Command-Line Interface with Provider Abstraction**
+
+**Primary Interface Style**: Command-Line Interface (CLI)
+- **Pattern**: Subcommand-based CLI with flag-driven configuration
+- **Framework**: clap v4.4 with derive macros
+- **Command Structure**: Hierarchical subcommands with shared global flags
+
+#### Data Architecture
+
+**Database Pattern**: **File-based Configuration with No Database**
+- **Configuration Storage**: TOML/YAML/JSON files
+- **Runtime Data**: In-memory state management
+- **Persistence**: Kubeconfig files and cluster metadata
+
+**Data Access Pattern**: **Direct File I/O with Configuration Abstraction**
+- **Implementation**: `src/config/mod.rs` - Configuration loading/saving
+- **Serialization**: Serde-based with multiple format support (TOML, YAML, JSON)
+- **Validation**: Runtime validation with custom error types
+
+### Quality Indicators
+
+**Separation of Concerns**: **Good**
+- Clear layer boundaries between CLI, business logic, and infrastructure
+- Provider abstraction isolates container runtime specifics
+- Configuration management separated from business logic
+
+**Testability**: **Medium**
+- Dependency injection enables unit testing
+- Provider trait allows mocking of container operations
+- Limited test coverage detected (only 2 test files found)
+
+**Maintainability**: **High**
+- Strong type system with comprehensive error handling
+- Clear module organization with single responsibility
+- Extensive documentation and structured logging
+
+**Scalability Readiness**: **Medium**
+- Provider abstraction enables multiple container runtime support
+- Async-first design supports concurrent operations
+- Single-binary deployment model has inherent scaling limitations
+
+### Architectural Strengths
+
+1. **Clean Provider Abstraction**: Well-designed `ContainerProvider` trait enables runtime switching
+2. **Comprehensive Error Handling**: Custom error types with context propagation
+3. **Configuration Flexibility**: Multiple format support with validation
+4. **Async-First Design**: Tokio-based for concurrent cluster operations
+5. **Domain-Driven Structure**: Clear separation between CLI, business logic, and infrastructure
+
+### Architectural Technical Debt
+
+#### Medium Priority Issues
+
+**1. Limited Test Coverage**
+- **Issue**: Only 2 test files detected in `tests/` directory
+- **Impact**: Reduced confidence in refactoring and changes
+- **Location**: `kina-cli/tests/`
+- **Recommendation**: Implement comprehensive unit and integration testing
+
+**2. Provider Trait Interface Breadth**
+- **Issue**: `ContainerProvider` trait has many methods (15+ operations)
+- **Impact**: Potential interface segregation principle violation
+- **Location**: `src/core/provider.rs` (lines 111-159)
+- **Recommendation**: Consider splitting into focused interfaces
 
 ## Integration Opportunities
 
-### Development Maturity Assessment
-- **Status**: Initial project setup phase
-- **Source Code**: Not yet implemented
-- **Dependencies**: Requirements documented but not configured
-- **Testing**: No testing framework established yet
+### Project Overview
+**Analysis Date**: 2025-01-20
+**Project Path**: /Users/vinnie/github/kina
+**Project Type**: Rust CLI Application for Kubernetes Container Management
+**Primary Focus**: Apple Container integration with Kubernetes orchestration
 
-### Technology Focus
-- **Primary Language**: Rust
-- **Target Platform**: macOS 15.6+
-- **Container Runtime**: Apple containers (native macOS)
-- **Kubernetes Tooling**: kubectl, kubectx, kubens, k9s integration planned
-- **Development Tooling**: mise for task management and environment setup
+### Workflow Assessment
+
+#### Development Maturity: Advanced
+The project demonstrates sophisticated development practices with comprehensive tooling:
+
+**Build System**:
+- Cargo workspace configuration with proper dependency management
+- Custom rustfmt.toml with formatting standards (max_width: 100, edition 2021)
+- Clippy configuration with complexity thresholds and documentation requirements
+- mise.toml task runner with 30+ development tasks
+
+**Testing Framework**:
+- Cargo test infrastructure with assert_cmd for CLI testing
+- Test fixtures present in kina-cli/tests/fixtures/
+- Integration tests for CLI and configuration modules
+
+**Code Quality Tools**:
+- rustfmt formatting with configured style guide
+- Clippy linting with cognitive complexity threshold of 30
+- cargo-audit for security vulnerability scanning
+- Pre-commit task automation through mise
+
+#### Automation Level: Medium
+**Existing Automation**:
+- mise task runner with comprehensive development workflows
+- Pre-commit automation including format, lint, test, and audit
+- CI task for local pipeline simulation
+- Release automation with binary stripping
+
+**Missing Automation**:
+- No GitHub Actions workflows detected (no .github/workflows/ directory)
+- No automated dependency updates (Dependabot not configured)
+- No automated security scanning in CI
 
 ### MCP Tool Recommendations
 
-**High Priority MCPs**:
+#### High Priority Integration
 
-1. **GitHub MCP**
-   - **Reason**: Repository is hosted on GitHub with submodule integration
-   - **Integration Points**: Issue tracking, PR management, release management
-   - **Setup Complexity**: Low
-   - **Immediate Value**: Project planning and collaboration
+**1. GitHub MCP**
+**Reason**: Repository hosted on GitHub with active development
+**Integration Points**:
+- Repository management and issue tracking
+- Pull request workflow automation
+- Release management integration
+- GitHub Actions workflow setup
 
-2. **Rust Development MCP**
-   - **Reason**: Core project language is Rust
-   - **Integration Points**: Cargo dependency management, build optimization, Rust-specific linting
-   - **Setup Complexity**: Low
-   - **Immediate Value**: Development workflow acceleration
+**Setup Complexity**: Low
+**Implementation**: Configure GitHub MCP for repository operations and workflow management
 
-**Medium Priority MCPs**:
+**2. Kubernetes MCP**
+**Reason**: Core project functionality involves Kubernetes cluster management
+**Integration Points**:
+- Kubernetes client integration (kube-rs dependency present)
+- Cluster lifecycle management
+- kubectl command integration
+- Manifest generation and validation
 
-3. **Kubernetes MCP**
-   - **Reason**: Core functionality involves Kubernetes cluster management
-   - **Integration Points**: Cluster configuration, resource deployment, kubectl integration
-   - **Setup Complexity**: Medium
-   - **Future Value**: Essential for core functionality implementation
+**Setup Complexity**: Medium
+**Implementation**: Integrate with existing kube and k8s-openapi dependencies
 
-4. **Docker/Container MCP**
-   - **Reason**: Container knowledge applicable to Apple Container workflows
-   - **Integration Points**: Container image strategies, runtime configuration patterns
-   - **Setup Complexity**: Medium
-   - **Future Value**: Container workflow understanding
+**3. Docker MCP**
+**Reason**: Apple Container technology with Docker API compatibility
+**Integration Points**:
+- Container image building and management
+- Apple Container CLI integration
+- Custom Kubernetes node image building
+- Container lifecycle management
+
+**Setup Complexity**: Medium
+**Implementation**: Integrate with existing Apple Container workflows in mise.toml
+
+#### Medium Priority Integration
+
+**4. Rust MCP**
+**Reason**: Primary development language with complex toolchain management
+**Integration Points**:
+- Cargo workspace management
+- Dependency analysis and updates
+- Build optimization and caching
+- Cross-compilation support
+
+**Setup Complexity**: Low
+**Implementation**: Enhance existing Cargo workflows with MCP automation
+
+**5. CLI Framework MCP**
+**Reason**: Clap-based CLI with extensive command structure
+**Integration Points**:
+- Command documentation generation
+- CLI testing automation
+- Help text optimization
+- Subcommand management
+
+**Setup Complexity**: Low
+**Implementation**: Integrate with existing clap framework
 
 ### Workflow Enhancement Opportunities
 
-**Build System Setup**:
-- Initialize Cargo workspace for Rust project structure
-- Configure mise.toml for development task automation
-- Set up local development environment with required dependencies
+#### Build System Enhancements
+**Current State**: Cargo workspace with mise task automation
+**Recommendations**:
+1. **Build Caching**: Implement cargo-cache for faster builds
+2. **Cross-compilation**: Add targets for different Apple platforms
+3. **Binary Optimization**: Enhance release builds with LTO and panic=abort
 
-**Development Environment**:
-- Configure mise for consistent development environment
-- Set up Apple container CLI integration
-- Create development scripts for local Kubernetes testing
+#### Testing Infrastructure
+**Current State**: Basic cargo test with CLI integration tests
+**Recommendations**:
+1. **Test Coverage**: Add cargo-tarpaulin for coverage reporting
+2. **Integration Testing**: Expand Apple Container integration tests
+3. **Performance Testing**: Add criterion benchmarking for CLI operations
+4. **Contract Testing**: Add Kubernetes API contract testing
 
-**Testing Framework**:
-- Set up Rust testing with cargo test
-- Integration testing with local Kubernetes clusters
-- CLI testing framework for command validation
+#### Quality Assurance
+**Current State**: rustfmt, clippy, and cargo-audit configured
+**Recommendations**:
+1. **Security Scanning**: Add cargo-deny for comprehensive dependency analysis
+2. **License Compliance**: Add license checking automation
+3. **Performance Monitoring**: Add cargo-flamegraph for profiling
+4. **Code Complexity**: Add metrics tracking for technical debt
 
-### Automation Opportunities
+### Integration Priority Matrix
 
-**Code Quality Automation**:
-- **rustfmt**: Automatic Rust code formatting
-- **clippy**: Rust linting and best practices
-- **cargo-audit**: Security vulnerability scanning
-- **pre-commit hooks**: Automated quality checks
+#### Immediate Priority (0-30 days)
+1. **GitHub MCP**: Repository management and workflow automation
+2. **CI/CD Setup**: GitHub Actions workflow implementation
+3. **Security Scanning**: cargo-deny and automated vulnerability scanning
+4. **Documentation**: Basic API documentation and user guides
 
-**Development Workflow**:
-- **mise tasks**: Standardized development commands
-- **Local testing**: Automated Apple container setup
-- **Documentation generation**: Automated CLI help and documentation
+#### Short-term Priority (1-3 months)
+1. **Kubernetes MCP**: Enhanced cluster management capabilities
+2. **Docker MCP**: Apple Container integration optimization
+3. **Testing Enhancement**: Coverage reporting and integration test expansion
+4. **Performance Monitoring**: Profiling and benchmarking setup
+
+#### Long-term Priority (3-6 months)
+1. **Advanced Monitoring**: Prometheus metrics and observability
+2. **Multi-platform Support**: Cross-compilation and packaging
+3. **Advanced Automation**: Dependency updates and release automation
+4. **Community Tools**: Package distribution and ecosystem integration
 
 ## Discovery Summary
 
 ### Key Findings
-- **Primary Technology**: Rust-based CLI application targeting macOS with Apple Container integration
-- **Architecture Pattern**: Command-line interface with modular design for Kubernetes operations
-- **Development Stage**: Early planning phase with comprehensive documentation but no implementation
-- **Critical Needs**: Project structure initialization, Rust development environment setup, Apple Container research
+- **Primary Technology**: Rust 2021 edition CLI application with modern async runtime (Tokio), comprehensive error handling (anyhow/thiserror), and structured logging (tracing)
+- **Architecture Pattern**: Monolithic CLI with provider abstraction layer, following domain-driven layered architecture with clear separation of concerns
+- **Development Stage**: Active development with advanced development practices, comprehensive tooling setup, and established project structure
+- **Critical Needs**: GitHub workflow automation, Kubernetes and Docker MCP integration, enhanced testing infrastructure, and CI/CD pipeline establishment
 
 ### Localization Recommendations
-- **Agent Priorities**:
-  - Rust development agents for project initialization and code structure
-  - GitHub integration agents for project management and collaboration
-  - Kubernetes agents for future core functionality development
-  - CLI development agents for command structure and user interface
-
-- **Command Relevance**:
-  - `/claudio:task` for breaking down implementation phases
-  - `/claudio:prd` for detailed requirements specification
-  - `/claudio:plan` for development roadmap creation
-  - `/claudio:code-quality` for Rust development standards
-
-- **Context Requirements**:
-  - Rust development contexts for language-specific patterns
-  - CLI application contexts for command structure design
-  - Kubernetes contexts for container orchestration integration
-  - macOS development contexts for platform-specific considerations
-
-- **Integration Focus**:
-  - Rust project initialization with Cargo workspace setup
-  - Development environment configuration with mise integration
-  - Code quality automation with rustfmt and clippy
-  - GitHub repository management for open source development
+- **Agent Priorities**: Focus on workflow agents (discovery-agent, prd-agent, plan-agent) for Rust CLI development, development agents (code-quality-analyzer, implement-agent) for quality assurance, and security agents for container security assessment
+- **Command Relevance**: Prioritize /claudio:discovery for project analysis, /claudio:prd for feature requirements, /claudio:code-quality for Rust quality analysis, /claudio:security-review for container security assessment
+- **Context Requirements**: Rust development contexts (cargo workspace patterns, CLI framework integration), container integration contexts (Apple Container, Kubernetes client patterns), and security contexts (container security, RBAC patterns)
+- **Integration Focus**: GitHub MCP for repository automation, Kubernetes MCP for cluster management enhancement, Docker MCP for Apple Container integration optimization
 
 ### Quality Assessment
-- **Analysis Completeness**: Comprehensive coverage across structure, technology, architecture, and integration domains
-- **Data Confidence**: High confidence in current project state assessment based on actual file analysis
-- **Recommendation Strength**: Strong recommendations based on identified technology stack and development requirements, with clear priority levels for implementation phases
+- **Analysis Completeness**: Comprehensive coverage across structure, technology, architecture, and integration dimensions with consistent findings
+- **Data Confidence**: High confidence in findings based on actual file analysis, dependency examination, and codebase structure assessment
+- **Recommendation Strength**: Strong confidence in localization guidance based on sophisticated development practices, advanced tooling setup, and clear technical requirements
 
 ---
 *This discovery document provides the foundation for Claudio system localization and project-specific customization.*

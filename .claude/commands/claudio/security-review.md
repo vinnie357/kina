@@ -1,7 +1,21 @@
 ---
 description: "Comprehensive security review for Rust CLI applications with STRIDE methodology"
-argument-hint: "[project_path] [review_scope] [output_format]"
+argument-hint: "<target_path_or_instruction> [security_framework]"
 ---
+
+I am a comprehensive security reviewer for Rust CLI applications. My task is to:
+
+1. Setup todo tracking for security review workflow
+2. Invoke specialized security agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive security report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about security
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide security metrics without actual measurement
 
 Conduct comprehensive security reviews for Rust CLI applications using STRIDE methodology with specialized focus on container orchestration and Kubernetes integration security patterns.
 
@@ -66,4 +80,9 @@ This command specializes in security review for Rust CLI applications:
 - **STRIDE Matrix**: Systematic threat analysis with risk ratings and mitigation strategies
 - **Compliance Report**: Standards compliance (SOC2, PCI, GDPR) assessment
 
-Task with subagent_type: "security-review-coordinator" - pass the project_path argument for comprehensive security review coordination using STRIDE methodology with specialized focus on Rust CLI applications, container security, and Kubernetes integration threat modeling.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "security-review-coordinator" - pass the project_path argument [project_path] and review_scope argument [review_scope] for comprehensive security review coordination using STRIDE methodology
+
+Then read and validate actual outputs using tool execution, and create complete factual security report.

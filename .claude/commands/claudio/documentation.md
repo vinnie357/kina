@@ -1,11 +1,23 @@
 ---
 description: "Generate comprehensive documentation for Rust CLI applications with parallel coordination"
-argument-hint: "[documentation_type] [project_path] [output_format]"
+argument-hint: "<doc_type> [project_path] [output_format]"
 ---
 
-Generate comprehensive documentation for Rust CLI applications through parallel specialized documentation agents with focus on container orchestration and Kubernetes integration.
+I am a comprehensive documentation generator for Rust CLI applications. My task is to:
 
-**Documentation Types:**
+1. Setup todo tracking for documentation workflow
+2. Invoke specialized documentation agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive documentation report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about documentation
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide documentation coverage metrics without actual measurement
+
+## Documentation Types
 - `full`: Complete documentation suite (README, API docs, user guides, developer guides)
 - `readme`: Project README with installation, usage, and examples
 - `api`: API reference documentation from code comments and annotations
@@ -14,7 +26,7 @@ Generate comprehensive documentation for Rust CLI applications through parallel 
 - `cli`: Command-line interface documentation with usage examples
 - `integration`: Integration guides for container and Kubernetes workflows
 
-**Rust CLI Documentation Focus:**
+## Rust CLI Documentation Focus
 This command specializes in documentation for Rust CLI applications:
 
 - **CLI Interface**: Command structure, argument parsing, configuration options
@@ -23,29 +35,7 @@ This command specializes in documentation for Rust CLI applications:
 - **Kubernetes Integration**: API usage examples, RBAC setup, deployment patterns
 - **Development Setup**: Cargo workspace, development tools, testing procedures
 
-**Documentation Capabilities:**
-- **Code Analysis**: Extracts documentation from Rust doc comments and code structure
-- **Usage Examples**: Generates realistic CLI usage examples with container workflows
-- **Architecture Documentation**: System design, module organization, integration patterns
-- **Tutorial Creation**: Step-by-step guides for common workflows and use cases
-- **API Reference**: Complete CLI command reference with examples and explanations
-
-**Container & Kubernetes Documentation:**
-- **Container Workflows**: Docker image creation, Apple Container usage, runtime configuration
-- **Kubernetes Integration**: API client usage, resource management, deployment examples
-- **RBAC Configuration**: Service account setup, role definitions, security patterns
-- **Monitoring Integration**: Observability, logging, metrics collection patterns
-- **Troubleshooting Guides**: Common issues, debugging techniques, error resolution
-
-**Documentation Sections Generated:**
-- **Installation**: Platform-specific installation instructions, dependencies, prerequisites
-- **Quick Start**: Essential workflows, basic commands, common use cases
-- **Command Reference**: Complete CLI interface documentation with examples
-- **Configuration**: Configuration file formats, environment variables, runtime options
-- **Integration Examples**: Container orchestration workflows, Kubernetes deployments
-- **Development Guide**: Building from source, testing, contributing guidelines
-
-**Example Usage:**
+## Example Usage
 ```bash
 /claudio:documentation full                             # Complete documentation suite
 /claudio:documentation readme ./kina-cli               # Project README generation
@@ -53,22 +43,9 @@ This command specializes in documentation for Rust CLI applications:
 /claudio:documentation integration kubernetes          # Kubernetes integration guide
 ```
 
-**Output Formats:**
-- **Markdown**: Standard markdown documentation for GitHub/GitLab
-- **HTML**: Static site generation with navigation and search
-- **Man Pages**: Unix manual pages for CLI commands
-- **PDF**: Formatted documentation for offline distribution
+## Implementation
 
-**Documentation Structure:**
-- **Root Documentation**: README.md, CHANGELOG.md, CONTRIBUTING.md
-- **User Documentation**: User guides, tutorials, FAQ, troubleshooting
-- **Developer Documentation**: Architecture, API reference, development setup
-- **Integration Documentation**: Container workflows, Kubernetes patterns, CI/CD examples
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "documentation-coordinator" - pass the doc_type argument [doc_type] and project_path argument [project_path] for comprehensive documentation generation coordination through specialized sub-agents
 
-**Quality Features:**
-- **Link Validation**: Ensures all internal and external links are functional
-- **Example Testing**: Validates that all code examples compile and execute correctly
-- **Consistency Checking**: Maintains consistent terminology and formatting across documents
-- **Accessibility**: Ensures documentation follows accessibility best practices
-
-Task with subagent_type: "documentation-coordinator" - pass the project_path argument for comprehensive documentation generation coordination through specialized sub-agents optimized for Rust CLI applications with container orchestration and Kubernetes integration focus.
+Then read and validate actual outputs using tool execution, and create complete factual report.

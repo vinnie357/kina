@@ -1,0 +1,258 @@
+# Multi-Service Application with Path-Based Routing
+#
+# This example demonstrates:
+# - Multiple services behind a single ingress
+# - Path-based routing (/app, /api, /admin)
+# - Different applications serving different paths
+#
+# Deploy with: kubectl apply -f multi-service-routing.yaml
+# Test with:
+#   curl -H "Host: platform.local" http://<cluster-ip>/app
+#   curl -H "Host: platform.local" http://<cluster-ip>/api/health
+#   curl -H "Host: platform.local" http://<cluster-ip>/admin
+
+---
+# Frontend Application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-app
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend-app
+  template:
+    metadata:
+      labels:
+        app: frontend-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: frontend-content
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: frontend-content
+        configMap:
+          name: frontend-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Frontend App</title></head>
+    <body>
+        <h1>🎨 Frontend Application</h1>
+        <p>This is the main application frontend.</p>
+        <p>Path: /app</p>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: default
+spec:
+  selector:
+    app: frontend-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# API Backend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-backend
+  template:
+    metadata:
+      labels:
+        app: api-backend
+    spec:
+      containers:
+      - name: httpd
+        image: httpd:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: api-content
+          mountPath: /usr/local/apache2/htdocs
+      volumes:
+      - name: api-content
+        configMap:
+          name: api-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>API Backend</title></head>
+    <body>
+        <h1>🔧 API Backend</h1>
+        <p>This is the API service backend.</p>
+        <p>Path: /api</p>
+    </body>
+    </html>
+  health.html: |
+    {
+      "status": "healthy",
+      "service": "api-backend",
+      "timestamp": "2025-09-28T23:00:00Z"
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: default
+spec:
+  selector:
+    app: api-backend
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Admin Interface
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-interface
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin-interface
+  template:
+    metadata:
+      labels:
+        app: admin-interface
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: admin-content
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: admin-content
+        configMap:
+          name: admin-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admin-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Admin Interface</title></head>
+    <body style="background: #f8f9fa; font-family: Arial;">
+        <h1>⚙️ Admin Interface</h1>
+        <p>This is the administration interface.</p>
+        <p>Path: /admin</p>
+        <div style="background: #fff3cd; padding: 10px; border-radius: 4px;">
+            <strong>⚠️ Warning:</strong> This is a demo admin interface.
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-service
+  namespace: default
+spec:
+  selector:
+    app: admin-interface
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Single Ingress with Path-Based Routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: platform-ingress
+  namespace: default
+  annotations:
+    nginx.org/ssl-redirect: "false"
+    nginx.org/server-tokens: "false"
+    # URL rewriting for clean paths
+    nginx.org/rewrites: |
+      serviceName=frontend-service rewrite=/
+      serviceName=api-service rewrite=/
+      serviceName=admin-service rewrite=/
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: platform.local
+    http:
+      paths:
+      # Frontend application
+      - path: /app
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80
+      # API backend
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 80
+      # Admin interface
+      - path: /admin
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-service
+            port:
+              number: 80
+      # Default route to frontend
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-service
+            port:
+              number: 80

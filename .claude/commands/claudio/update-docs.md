@@ -1,7 +1,21 @@
 ---
 description: "Update and maintain documentation for Rust CLI projects with intelligent change detection"
-argument-hint: "[doc_type] [project_path] [update_scope]"
+argument-hint: "[changes-description]"
 ---
+
+I am a comprehensive documentation updater for Rust CLI projects. My task is to:
+
+1. Setup todo tracking for documentation update workflow
+2. Invoke specialized documentation agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive documentation update report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about documentation
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide documentation metrics without actual measurement
 
 Update and maintain project documentation with intelligent change detection and automated synchronization for Rust CLI applications with container orchestration focus.
 
@@ -83,4 +97,9 @@ This command specializes in maintaining Rust CLI application documentation:
 - **Quality Metrics**: Documentation coverage analysis and improvement recommendations
 - **Integration Validation**: Confirmation that container and Kubernetes examples work correctly
 
-Task with subagent_type: "documentation-coordinator" - pass the project_path argument for comprehensive documentation update coordination with intelligent change detection optimized for Rust CLI applications with container orchestration and Kubernetes integration focus.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "documentation-coordinator" - pass the changes-description argument [changes-description] and project_path argument [project_path] for comprehensive documentation update coordination
+
+Then read and validate actual outputs using tool execution, and create complete factual documentation update report.

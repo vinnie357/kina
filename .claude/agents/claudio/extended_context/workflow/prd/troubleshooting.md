@@ -1,31 +1,37 @@
-# PRD Troubleshooting for Rust CLI Application
+# PRD Troubleshooting for Rust CLI Container Orchestration
 
 ## Common Issues
 
-### Incomplete Technical Requirements
-**Problem**: PRD lacks sufficient Rust-specific implementation details
-**Solution**: Include Cargo.toml dependencies, crate structure requirements, and Rust language feature specifications. Reference Rust CLI development patterns and Apple Container API integration requirements.
+### Incomplete Rust Technical Specifications
+**Problem**: PRD lacks sufficient Rust-specific implementation details for CLI development
+**Solution**: Include specific Cargo.toml dependencies (clap 4.5+, tokio 1.47+), crate structure requirements, and Rust 2021 edition specifications. Reference async/await patterns and error handling with anyhow/thiserror.
 
-### Apple Container Specification Gaps
-**Problem**: Container runtime integration requirements not clearly defined
-**Solution**: Research Apple Container API documentation, specify required system calls, and define container lifecycle management requirements. Include macOS platform-specific considerations.
+### Apple Container Integration Gaps
+**Problem**: Container runtime integration requirements not clearly defined for macOS
+**Solution**: Research Apple Container CLI usage patterns, specify required system permissions, and define container lifecycle management requirements. Include macOS 15.6+ compatibility and runtime dependency specifications.
 
-### Kubernetes Integration Ambiguity
-**Problem**: Kubernetes functionality requirements too generic or unclear
-**Solution**: Specify exact kube-rs or kubernetes-rs client library usage, define RBAC requirements, and detail kubectl compatibility patterns. Include cluster management workflow specifications.
+### Kubernetes Client Library Ambiguity
+**Problem**: Kubernetes functionality requirements lack specific kube-rs integration details
+**Solution**: Specify exact kube-rs and k8s-openapi version requirements, define RBAC permissions needed, and detail cluster resource management patterns. Include API client configuration and authentication requirements.
 
-### Performance Requirements Missing
-**Problem**: PRD lacks performance benchmarks and resource specifications
-**Solution**: Define startup time requirements, memory usage limits, and container creation performance targets. Include comparison benchmarks against kind for equivalent functionality.
+### CLI Framework Requirements Unclear
+**Problem**: Command structure and user interface specifications insufficient
+**Solution**: Define specific clap derive patterns, subcommand hierarchy, argument parsing strategies, and output formatting requirements (JSON, YAML, table). Include error messaging and help text standards.
+
+### Performance and Resource Specifications Missing
+**Problem**: PRD lacks quantifiable performance benchmarks and resource constraints
+**Solution**: Define cluster creation time targets, memory usage limits, and container startup performance requirements. Include comparison benchmarks against kind for workflow compatibility validation.
 
 ## Debug Strategies
-- **Technical Research**: Analyze existing Rust CLI applications and Apple Container documentation for realistic requirement specifications
-- **User Workflow Mapping**: Document complete user journeys from cluster creation to deletion with all intermediate operations
-- **Platform Validation**: Verify Apple Container capabilities and limitations for accurate requirement specification
-- **Compatibility Analysis**: Compare with kind functionality to ensure feature parity and workflow compatibility
+- **Rust Ecosystem Research**: Analyze existing Rust CLI tools and container management utilities for realistic requirement specifications
+- **Apple Container Validation**: Test Apple Container capabilities and limitations for accurate integration requirement definition
+- **Kubernetes API Analysis**: Verify kube-rs client capabilities and API compatibility for requirement feasibility
+- **User Journey Mapping**: Document complete workflows from project initialization to cluster management operations
+- **Competitor Analysis**: Compare with kind, k3d, and other local Kubernetes solutions for feature parity requirements
 
 ## Getting Help
-- **Rust CLI Examples**: Study popular Rust CLI applications for pattern guidance and requirement inspiration
-- **Apple Container Documentation**: Reference official Apple documentation for container runtime capabilities and limitations
-- **Kubernetes Specifications**: Use official Kubernetes API documentation for integration requirement accuracy
-- **Project Discovery**: Reference .claudio/docs/discovery.md for technology-specific insights and requirements foundation
+- **Rust CLI Development**: Rust CLI Book and clap documentation for command structure and interface design patterns
+- **Apple Container**: Apple Developer documentation for container runtime integration and macOS platform requirements
+- **Kubernetes Client**: kube-rs documentation and Kubernetes API reference for client integration specifications
+- **Container Orchestration**: kind documentation and local Kubernetes development patterns for workflow compatibility
+- **Project Discovery**: .claudio/docs/discovery.md for technology stack analysis and architecture pattern insights

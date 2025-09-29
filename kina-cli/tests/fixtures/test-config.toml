@@ -1,0 +1,29 @@
+[cluster]
+default_name = "test-cluster"
+default_image = "kindest/node:test"
+default_wait_timeout = 60
+data_dir = "/tmp/kina-test-data"
+retain_on_failure = false
+default_cni = "Ptp"
+
+[apple_container]
+cli_path = "/usr/local/bin/container"
+
+[apple_container.runtime_config]
+memory_limit = "2Gi"
+storage_limit = "20Gi"
+
+[apple_container.network]
+network_name = "kina"
+enable_ipv6 = false
+dns_servers = []
+
+[kubernetes]
+default_version = "v1.28.0"
+default_namespace = "default"
+kubeconfig_dir = "/tmp/kina-test-kubeconfig"
+
+[logging]
+level = "debug"
+format = "text"
+file_logging = false

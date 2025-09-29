@@ -1,0 +1,112 @@
+# Basic Web Application with NGINX Ingress
+#
+# This example demonstrates:
+# - Simple web app deployment with nginx
+# - Service to expose the app
+# - Ingress rule with host-based routing
+#
+# Deploy with: kubectl apply -f basic-web-app.yaml
+# Test with: curl -H "Host: myapp.local" http://<cluster-ip>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: basic-web-app
+  namespace: default
+  labels:
+    app: basic-web-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: basic-web-app
+  template:
+    metadata:
+      labels:
+        app: basic-web-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html-content
+        configMap:
+          name: web-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Basic Web App</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 600px; margin: 0 auto; text-align: center; }
+            .header { color: #2c3e50; margin-bottom: 30px; }
+            .info { background: #ecf0f1; padding: 20px; border-radius: 8px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 class="header">🎉 Basic Web App</h1>
+            <div class="info">
+                <p>Congratulations! Your basic web application is running successfully.</p>
+                <p><strong>Deployment:</strong> basic-web-app</p>
+                <p><strong>Replicas:</strong> 2</p>
+                <p><strong>Ingress:</strong> myapp.local</p>
+            </div>
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: basic-web-app-service
+  namespace: default
+  labels:
+    app: basic-web-app
+spec:
+  selector:
+    app: basic-web-app
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: basic-web-app-ingress
+  namespace: default
+  annotations:
+    nginx.org/ssl-redirect: "false"
+    nginx.org/server-tokens: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: myapp.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: basic-web-app-service
+            port:
+              number: 80

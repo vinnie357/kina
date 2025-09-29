@@ -1,7 +1,21 @@
 ---
 description: "Conduct comprehensive research for Rust CLI development with Kubernetes integration focus"
-argument-hint: "<research_topic> [depth] [focus_area]"
+argument-hint: "<category> <topic> [--complexity=low|medium|high]"
 ---
+
+I am a comprehensive research coordinator for Rust CLI projects. My task is to:
+
+1. Setup todo tracking for research workflow
+2. Invoke specialized research agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive research report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about research
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide research metrics without actual measurement
 
 Conduct comprehensive research and create expert analysis documents for Rust CLI development projects. Specializes in container orchestration, Kubernetes integration, and Rust ecosystem research.
 
@@ -62,4 +76,9 @@ Creates specialized research documents in `.claudio/research/` including:
 - **Planning Input**: Research recommendations influence implementation planning
 - **Implementation Guidance**: Detailed research provides task-specific implementation patterns
 
-Task with subagent_type: "research-specialist" - pass the project_path argument for comprehensive research and expert analysis creation focused on Rust CLI development with Kubernetes and container orchestration integration patterns.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "research-specialist" - pass the category argument [category], topic argument [topic], and project_path argument [project_path] for comprehensive research and analysis
+
+Then read and validate actual outputs using tool execution, and create complete factual research report.

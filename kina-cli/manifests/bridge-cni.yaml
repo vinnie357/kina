@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-cni-config
+  namespace: kube-system
+data:
+  10-bridge.conf: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "bridge",
+      "type": "bridge",
+      "bridge": "cni0",
+      "isDefaultGateway": true,
+      "ipMasq": true,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "host-local",
+        "subnet": "10.244.0.0/16",
+        "routes": [
+          { "dst": "0.0.0.0/0" }
+        ]
+      }
+    }
+  99-loopback.conf: |
+    {
+      "cniVersion": "0.3.1",
+      "name": "lo",
+      "type": "loopback"
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bridge-cni-installer
+  namespace: kube-system
+  labels:
+    k8s-app: bridge-cni
+spec:
+  selector:
+    matchLabels:
+      k8s-app: bridge-cni
+  template:
+    metadata:
+      labels:
+        k8s-app: bridge-cni
+    spec:
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+      - key: CriticalAddonsOnly
+        operator: Exists
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      containers:
+      - name: bridge-cni-installer
+        image: alpine:3.18
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          # Install CNI plugins if not present
+          if [ ! -f /opt/cni/bin/bridge ]; then
+            echo "Installing CNI plugins..."
+            wget -q https://github.com/containernetworking/plugins/releases/download/v1.3.0/cni-plugins-linux-amd64-v1.3.0.tgz -O /tmp/cni.tgz
+            tar -xzf /tmp/cni.tgz -C /opt/cni/bin/
+            chmod +x /opt/cni/bin/*
+          fi
+
+          # Copy CNI config
+          cp /etc/cni-config/* /etc/cni/net.d/
+
+          # Keep container running
+          while true; do sleep 3600; done
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: cni-bin
+          mountPath: /opt/cni/bin
+        - name: cni-config
+          mountPath: /etc/cni/net.d
+        - name: cni-config-source
+          mountPath: /etc/cni-config
+        resources:
+          requests:
+            cpu: 10m
+            memory: 10Mi
+          limits:
+            cpu: 100m
+            memory: 50Mi
+      volumes:
+      - name: cni-bin
+        hostPath:
+          path: /opt/cni/bin
+          type: DirectoryOrCreate
+      - name: cni-config
+        hostPath:
+          path: /etc/cni/net.d
+          type: DirectoryOrCreate
+      - name: cni-config-source
+        configMap:
+          name: bridge-cni-config
+      nodeSelector:
+        kubernetes.io/os: linux

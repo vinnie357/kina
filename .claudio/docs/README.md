@@ -1,29 +1,45 @@
-# Kina: Kubernetes in Apple Container (CLI)
+# Kina: Kubernetes Cluster Management CLI for macOS
 
 ## Project Overview
 
-Kina is a macOS-native CLI tool designed to provide a lightweight, efficient alternative to Kind (Kubernetes in Docker) for local Kubernetes development. Leveraging Apple Container technology, Kina enables developers to create and manage single-node Kubernetes clusters directly on macOS.
+Kina is a sophisticated Rust-based CLI application designed for Kubernetes cluster management using Apple Container technology. It provides a powerful, flexible tool for local Kubernetes orchestration on macOS, following a monolithic CLI architecture with a clean provider abstraction layer.
 
 ## Technology Stack
 
-- **Primary Language**: Rust
-- **Target Platform**: macOS 15.6+
-- **Container Runtime**: Apple Container
-- **Kubernetes Compatibility**: Targets kubectl, kubectx, kubens, k9s integrations
+### Core Technologies
+- **Programming Language**: Rust 2021 Edition (Minimum version: 1.70)
+- **Primary Frameworks**:
+  - CLI Framework: Clap v4.5.47 (with derive macros)
+  - Async Runtime: Tokio v1.47.1 (full features)
+  - Error Handling: Anyhow v1.0.99, Thiserror v1.0.69
+  - Logging: Tracing v0.1.41 with structured logging
 
-## Quick Start Guide
+### Planned Integrations
+- Kubernetes Client: kube-rs v0.87
+- Container Runtimes: Apple Container, (Future) Docker support
+
+## Quick Start
 
 ### Prerequisites
+- **Operating System**: macOS 15.6+
+- **Runtime**: Apple Container technology installed
+- **Development Tools**:
+  - Rust 1.70+ (stable channel)
+  - mise (task runner)
+  - Optional: Docker for additional container runtime support
 
-- macOS 15.6 or later
-- Apple Container runtime
-- Basic Kubernetes knowledge
-
-### Installation (Planned)
+### Installation
 
 ```bash
-# Future installation method
-brew install kina  # Placeholder for future Homebrew installation
+# Clone the repository
+git clone https://github.com/your-org/kina.git
+cd kina
+
+# Build the project
+mise run build
+
+# Run tests
+mise run test
 ```
 
 ## Essential Commands
@@ -31,68 +47,112 @@ brew install kina  # Placeholder for future Homebrew installation
 ### Cluster Management
 
 ```bash
-# Create a new single-node Kubernetes cluster
-kina create cluster
+# Create a new Kubernetes cluster
+kina cluster create --name my-cluster
 
 # List existing clusters
-kina list clusters
+kina cluster list
 
 # Delete a cluster
-kina delete cluster [cluster-name]
+kina cluster delete --name my-cluster
 ```
 
-### Development Workflows
+### Configuration
 
 ```bash
-# Initialize a new Kina project
-kina init
+# View current configuration
+kina config view
 
-# Configure cluster settings
-kina config set [options]
-
-# Switch between clusters
-kina use-context [cluster-name]
+# Set configuration parameters
+kina config set cluster.runtime=apple-container
 ```
 
-## Development Status
+## Development Workflows
 
-- **Current Phase**: Planning and Requirements Gathering
-- **Implementation**: Not yet started
-- **Target Features**:
-  - Single-node Kubernetes cluster management
-  - Apple Container integration
-  - Seamless kubectl workflow
+### Build and Test
 
-## Planned Features
+```bash
+# Standard build
+mise run build
 
-1. Single-node Kubernetes cluster creation
-2. Cluster lifecycle management
-3. Apple Container runtime integration
-4. Compatibility with existing Kubernetes tools
-5. Lightweight and fast cluster provisioning
+# Development build
+mise run dev
 
-## Development Roadmap
+# Run tests
+mise run test
 
-### Phase 1: Project Initialization
-- [x] Project structure design
-- [x] Technology stack selection
-- [ ] Rust project setup
-- [ ] Apple Container research
+# Code quality checks
+mise run lint
+```
 
-### Phase 2: Core Implementation
-- [ ] Basic CLI structure
-- [ ] Cluster creation logic
-- [ ] Container runtime integration
-- [ ] Testing framework implementation
+### Task Automation
+
+The project uses `mise` for comprehensive task automation:
+- `mise run build`: Release build
+- `mise run dev`: Development build
+- `mise run test`: Execute all tests
+- `mise run lint`: Code quality checks
+
+## Architecture Highlights
+
+### Provider Abstraction
+Kina implements a flexible `ContainerProvider` trait, enabling:
+- Runtime-agnostic container management
+- Easy extension to new container technologies
+- Clean separation of container runtime concerns
+
+### Design Patterns
+- **Builder Pattern**: For complex container specification construction
+- **Provider Pattern**: Abstracts container runtime operations
+- **Command Pattern**: Encapsulates CLI subcommand logic
+- **Domain-Driven Layered Architecture**
+
+## Roadmap and Development Status
+
+### Current Focus
+- Rust CLI framework integration
+- Apple Container runtime support
+- Kubernetes cluster management primitives
+
+### Planned Enhancements
+1. Comprehensive Kubernetes client integration
+2. Multi-runtime support
+3. Advanced cluster lifecycle management
+4. Enhanced testing infrastructure
+5. Performance optimization
+
+## Troubleshooting
+
+### Common Issues
+- Verify Apple Container runtime is correctly installed
+- Check Rust toolchain compatibility
+- Validate configuration file syntax
+- Review tracing logs for detailed error information
 
 ## Contributing
 
-Contributions are welcome! Please see our contribution guidelines for more information.
+1. Review contribution guidelines
+2. Fork the repository
+3. Create a feature branch
+4. Implement your changes
+5. Submit a pull request
+
+## Security and Quality
+
+- Comprehensive error handling
+- Structured logging
+- Planned security scanning with cargo-deny
+- Rust's strong type system for robust implementation
 
 ## License
 
-[License information to be added]
+[Insert appropriate open-source license]
 
-## Support
+## Contact and Support
 
-For issues and support, please file a GitHub issue in the project repository.
+- GitHub Issues: Project repository
+- Discussion Forums: TBD
+
+---
+
+*Crafted with Rust, powered by Apple Container technology, designed for Kubernetes enthusiasts.*

@@ -1,29 +1,30 @@
-# PRD Context for Rust CLI Application
+# Product Requirements Context for Rust CLI Container Orchestration
 
 ## Project-Specific Guidance
-Based on discovery analysis, this project requires PRD generation for a Rust-based CLI tool that provides Kubernetes in Apple Container functionality as a macOS-native alternative to kind (Kubernetes in Docker).
+Based on discovery analysis, this project requires product requirements definition for a Rust CLI application that manages Kubernetes clusters using Apple Container technology, targeting macOS developers with kind-compatible workflows.
 
 ## Recommended Approaches
-- **CLI Application Requirements**: Define command structure, user workflows, and interface design for Kubernetes cluster management
-- **Apple Container Integration**: Specify container runtime requirements, macOS platform dependencies, and system integration patterns
-- **Kubernetes Functionality**: Detail cluster lifecycle management, kubectl integration, and compatibility with existing Kubernetes tooling
-- **Performance Specifications**: Define startup time, resource usage, and scalability requirements for local development environments
+- **CLI Command Architecture**: Define hierarchical subcommand structure using clap derive patterns for cluster lifecycle operations (create, delete, list, status)
+- **Container Runtime Requirements**: Specify Apple Container integration requirements, Docker API compatibility, and macOS platform constraints
+- **Kubernetes Integration Specs**: Define kube-rs client requirements, API resource management, and cluster configuration standards
+- **User Experience Design**: Establish CLI output formatting (JSON, YAML, table), error messaging, and interactive workflow patterns
 
 ## Integration Patterns
-PRD integrates with Rust development ecosystem through:
-- Cargo crate specifications and dependency management requirements
-- Apple Container API requirements and runtime integration specifications
-- Kubernetes API client requirements using kube-rs or kubernetes-rs libraries
-- CLI framework requirements using clap or structopt for command parsing
+PRD development integrates with:
+- Clap CLI framework specifications for command structure and argument parsing
+- Apple Container runtime requirements and macOS compatibility constraints
+- Kubernetes API specifications through kube-rs and k8s-openapi integration
+- Cargo workspace architecture for modular CLI application development
+- Development tooling requirements through mise task automation and quality tools
 
 ## Quality Standards
-- **Technical Specificity**: Include detailed Rust implementation requirements, Apple Container API usage, and Kubernetes integration specifications
-- **User Experience**: Define CLI command patterns, error handling, and help documentation requirements
-- **Platform Requirements**: Specify macOS version compatibility, Apple Container runtime dependencies, and system resource requirements
-- **Compatibility Standards**: Ensure kind workflow compatibility and existing Kubernetes tool integration
+- **Requirements Traceability**: Link functional requirements to specific Rust modules and CLI commands
+- **Container Compatibility**: Ensure requirements address Apple Container specific features and limitations
+- **Kubernetes Compliance**: Validate requirements against Kubernetes API standards and resource management patterns
+- **CLI Usability**: Define clear user stories for container orchestration workflows and cluster management tasks
 
 ## Next Steps
-- Document CLI command structure and user interaction patterns
-- Specify Apple Container integration requirements and API usage
-- Define Kubernetes cluster management workflows and lifecycle operations
-- Establish performance benchmarks and resource usage specifications
+- Define core CLI command structure and subcommand hierarchy
+- Specify Apple Container integration requirements and runtime dependencies
+- Establish Kubernetes cluster lifecycle management requirements
+- Document user experience flows for container orchestration operations

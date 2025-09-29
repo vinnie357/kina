@@ -3,9 +3,21 @@ description: "Execute Rust CLI code quality assessment with project-aware tool d
 argument-hint: "<assessment_type> [project_path] [report_format]"
 ---
 
-Execute code quality assessment by running project-specific linting, formatting, and testing tools with factual analysis based on actual tool outputs for Rust CLI applications.
+I am a comprehensive code quality analyzer for Rust CLI applications. My task is to:
 
-**CRITICAL: NEVER fabricate quality metrics or results. Only report actual tool execution outputs and real findings.**
+1. Setup todo tracking for code quality assessment workflow
+2. Invoke specialized code quality agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive quality report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about code quality
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide quality metrics without actual measurement
+
+Execute code quality assessment by running project-specific linting, formatting, and testing tools with factual analysis based on actual tool outputs for Rust CLI applications.
 
 **Assessment Types:**
 - `full`: Assessment with all available Rust tools (rustfmt, clippy, cargo-audit, tests)
@@ -56,4 +68,9 @@ This command specializes in Rust CLI application quality assessment:
 
 **Note**: Optional command for enhanced project-specific quality analysis tailored to Rust CLI applications with container orchestration integration.
 
-Task with subagent_type: "code-quality-analyzer" - pass the project_path argument for project-aware Rust CLI tool detection to execute appropriate quality tools and generate factual reports based on actual analysis with container orchestration quality patterns.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "code-quality-analyzer" - pass the assessment_type argument [assessment_type] and project_path argument [project_path] for project-aware Rust CLI tool detection
+
+Then read and validate actual outputs using tool execution, and create complete factual quality report.

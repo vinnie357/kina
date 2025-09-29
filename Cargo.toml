@@ -1,0 +1,71 @@
+[workspace]
+members = [
+    "kina-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["kina contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vinnie/kina"
+homepage = "https://github.com/vinnie/kina"
+documentation = "https://github.com/vinnie/kina"
+keywords = ["kubernetes", "containers", "apple", "cli", "kind"]
+categories = ["command-line-utilities", "development-tools"]
+edition = "2021"
+rust-version = "1.70"
+
+[workspace.dependencies]
+# CLI Framework
+clap = { version = "4.4", features = ["derive", "cargo", "wrap_help", "string"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging and Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Async Runtime
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Date and Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Configuration
+config = "0.13"
+directories = "5.0"
+dirs = "5.0"
+
+# Process Management
+tokio-process = "0.2"
+
+# Network and HTTP
+reqwest = { version = "0.11", features = ["json", "stream"] }
+url = "2.4"
+
+# Kubernetes Client (for future use)
+kube = { version = "0.87", features = ["client", "config"] }
+k8s-openapi = { version = "0.20", features = ["latest"] }
+
+# File System Operations
+walkdir = "2.4"
+tempfile = "3.8"
+
+# Testing
+assert_cmd = "2.0"
+predicates = "3.0"
+
+# Unix system calls (for TTY detection)
+libc = "0.2"

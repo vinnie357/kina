@@ -1,144 +1,137 @@
 # Project Structure Analysis
 
 ## Project Overview
-
-**Project**: kina - Kubernetes in Apple Container  
-**Type**: CLI development project (Rust-based)  
-**Purpose**: Alternative to kind (Kubernetes in Docker) using Apple Container CLI  
-**Analysis Date**: 2025-09-13
+**Project Type**: Rust workspace with CLI application for Kubernetes container management
+**Primary Domain**: Kubernetes orchestration using Apple Container technology
+**Architecture**: Modular CLI application with core container abstraction layer
+**Development Stage**: Active development with established project structure
 
 ## Directory Organization
+- **Total Directories**: 31
+- **Total Files**: 60
+- **Max Depth**: 6 levels (excluding system nested examples)
+- **Organization Pattern**: Feature-based modular structure with clear separation of concerns
 
-### Summary Statistics
-- **Total Directories**: 12 (excluding .git and claudio submodule)
-- **Total Files**: 5 (project files only, excluding .git and claudio)
-- **Max Depth**: 3 levels
-- **Organization Pattern**: Early-stage project with minimal structure
+## Key Directories
 
-### Project Root Structure
-```
-kina/
-├── README.md               # Project documentation
-├── .gitmodules            # Git submodule configuration
-├── .claude/               # Claude AI project configuration
-│   ├── agents/
-│   │   └── claudio/
-│   └── commands/
-│       └── claudio/
-├── .claudio/              # Claudio framework installation
-│   ├── docs/              # Generated analysis documents
-│   │   ├── architecture-analysis.md
-│   │   ├── integration-analysis.md
-│   │   └── technology-analysis.md
-│   ├── shared/
-│   │   ├── resources/
-│   │   ├── standards/
-│   │   └── utilities/
-│   └── status/
-└── claudio/               # Claudio framework submodule (excluded from analysis)
-```
+### Source Code Directories
+- **`kina-cli/src/`** - Main application source code
+  - **`src/core/`** - Core container and Kubernetes abstraction modules
+  - **`src/cli/`** - Command-line interface implementation
+  - **`src/config/`** - Configuration management modules
+  - **`src/utils/`** - Utility functions and helpers
+  - **`src/errors/`** - Error handling definitions
 
-## Key Directory Classification
-
-### Documentation Directories
-- **Root Documentation**: `README.md` - Primary project documentation
-- **Analysis Documentation**: `.claudio/docs/` - Generated technical analysis documents
-  - Contains architecture, integration, and technology analysis files
+### Testing Directories  
+- **`kina-cli/tests/`** - Integration and CLI tests
+  - **`tests/fixtures/`** - Test configuration files and data
 
 ### Configuration Directories
-- **.claude/**: Claude AI project configuration structure
-  - `agents/claudio/` - Agent configuration
-  - `commands/claudio/` - Command configuration
-- **.claudio/**: Claudio framework installation directory
-  - `shared/` - Shared resources, standards, and utilities
-  - `status/` - Installation and status tracking
-  - `docs/` - Generated documentation
+- **Root configuration files**: `Cargo.toml`, `rustfmt.toml`, `clippy.toml`, `mise.toml`
+- **`kina-cli/templates/`** - Configuration templates for container networking
 
-### Version Control
-- **.gitmodules**: Git submodule configuration for Claudio framework integration
+### Resource and Manifest Directories
+- **`kina-cli/manifests/`** - Kubernetes manifest files
+  - **`manifests/nginx-ingress/`** - NGINX ingress controller configurations
+- **`kina-cli/images/`** - Container image build scripts and Dockerfiles
+  - **`images/kina-node/`** - Node container image specifications
 
-## File Organization Analysis
+### Documentation Directories
+- **`docs/`** - Project documentation (CNI and kubelet configuration guides)
+- **`.claudio/`** - Claudio system installation (analysis and discovery outputs)
+
+### Example and Script Directories
+- **`kina-cli/examples/`** - Usage examples and demonstration configurations
+  - **`examples/ingress/`** - Ingress controller examples and routing configurations
+- **`kina-cli/scripts/`** - Development and deployment shell scripts
+
+### Build and Distribution Directories
+- **`target/`** - Rust build artifacts and compiled binaries (excluded from analysis)
+
+## Directory Tree Structure
+```
+kina/
+├── Cargo.toml (workspace configuration)
+├── kina-cli/ (main application package)
+│   ├── src/
+│   │   ├── core/ (container and Kubernetes abstractions)
+│   │   ├── cli/ (command-line interface)
+│   │   ├── config/ (configuration management)
+│   │   ├── utils/ (utility functions)
+│   │   └── errors/ (error handling)
+│   ├── tests/ (integration tests)
+│   ├── manifests/ (Kubernetes configurations)
+│   ├── images/ (container build specifications)
+│   ├── examples/ (usage demonstrations)
+│   ├── scripts/ (automation scripts)
+│   └── templates/ (configuration templates)
+├── docs/ (project documentation)
+└── [configuration files: rustfmt.toml, clippy.toml, mise.toml]
+```
+
+## Organization Patterns
 
 ### File Naming Conventions
-- **Documentation**: kebab-case with `.md` extension (`README.md`, `architecture-analysis.md`)
-- **Configuration**: lowercase with appropriate extensions (`.gitmodules`)
-- **Pattern Consistency**: Consistent use of lowercase and hyphens for multi-word files
+- **Rust modules**: snake_case naming (`apple_container.rs`, `cluster_config.rs`)
+- **Directories**: kebab-case for multi-word names (`kina-cli`, `nginx-ingress`)
+- **Configuration files**: lowercase with extensions (`rustfmt.toml`, `.gitignore`)
+- **Scripts**: kebab-case shell scripts (`.sh` extension)
 
-### File Extensions Present
-- **.md**: Markdown documentation files (4 files)
-- **.gitmodules**: Git submodule configuration (1 file)
+### Code Organization Structure
+- **Modular design**: Clear separation between core logic, CLI interface, and configuration
+- **Domain-driven modules**: Core modules organized by functionality (provider, kubernetes, cluster)
+- **Feature isolation**: Examples, manifests, and scripts organized by specific use cases
 
-### Organization Patterns
-- **Documentation-First**: Project prioritizes clear documentation structure
-- **Framework Integration**: Structured integration with Claudio development framework
-- **Early Development Stage**: Minimal source code structure, focus on planning and tooling setup
+### Project Structure Type
+- **Cargo workspace**: Single workspace with one primary package (`kina-cli`)
+- **Library + Binary**: Dual structure with both library (`lib.rs`) and binary (`main.rs`) targets
+- **Layered architecture**: Core abstractions, CLI layer, and configuration management
 
-## Project Indicators
+## Configuration Management
 
-### Project Type Classification
-- **Primary Language**: Rust (indicated in README.md)
-- **Project Category**: CLI application development
-- **Target Platform**: macOS (requires macOS 15.6+)
-- **Deployment Target**: Apple Container ecosystem
+### Build Configuration
+- **`Cargo.toml`** - Workspace and dependency management with comprehensive dependency list
+- **`clippy.toml`** - Rust linting configuration
+- **`rustfmt.toml`** - Code formatting standards
+- **`mise.toml`** - Development environment and tool version management
 
-### Development Approach
-- **Monorepo**: No - single project with submodule integration
-- **Framework Usage**: Claudio development framework for project management
-- **Tooling**: Planned integration with mise for task management
-- **Structure Maturity**: Early stage - primarily documentation and planning phase
+### Runtime Configuration
+- **`kina-cli/templates/ptp-cni.conflist`** - Container network interface configuration template
+- **Test fixtures**: `tests/fixtures/test-config.toml` for integration testing
 
-### Dependencies and Requirements
-- **System Requirements**: macOS 15.6 or 26, Apple Container CLI
-- **Development Tools**: mise, mise.toml (planned)
-- **Target Ecosystem**: Kubernetes tooling (kubectl, kubectx, kuebens, k9s)
-- **Reference Implementation**: kind (Kubernetes in Docker)
+## Technology Stack Indicators
 
-## Current Development Status
+### Primary Technologies
+- **Language**: Rust (2021 edition, minimum version 1.70)
+- **CLI Framework**: clap v4.4 with derive features
+- **Async Runtime**: tokio with full feature set
+- **Serialization**: serde with JSON, YAML, and TOML support
 
-### Implementation Stage
-- **Phase**: Planning and requirements gathering
-- **Code Structure**: Not yet established - no source directories present
-- **Documentation**: Comprehensive project documentation in place
-- **Tooling Setup**: Claudio framework integration completed
+### Container and Kubernetes Integration
+- **Container Technology**: Apple Container runtime integration
+- **Kubernetes Client**: kube-rs (v0.87) and k8s-openapi (v0.20) for API interactions
+- **Network Configuration**: CNI (Container Network Interface) support with bridge and PTP configurations
 
-### Next Development Steps Required
-Based on structure analysis, the project needs:
-1. Source code directory structure (src/, lib/, bin/)
-2. Cargo.toml for Rust project configuration
-3. Testing framework setup (tests/)
-4. CI/CD configuration
-5. Development tooling configuration (mise.toml)
+### Development Tooling
+- **Testing**: assert_cmd and predicates for CLI testing
+- **Logging**: tracing ecosystem with JSON output support
+- **Error Handling**: anyhow and thiserror for comprehensive error management
 
-## Framework Integration
+## Project Integration Points
 
-### Claudio Framework Status
-- **Installation**: Complete (.claudio/ directory present)
-- **Documentation**: Generated analysis files present
-- **Integration**: Configured for project management and development workflow
-- **Configuration**: Claude AI agent and command structure established
+### Container Management
+- **Apple Container Provider**: Core abstraction in `src/core/apple_container.rs`
+- **Kubernetes API Integration**: Client implementations in `src/core/kubernetes.rs`
+- **Cluster Management**: Cluster lifecycle in `src/core/cluster.rs`
 
-### Analysis Documents Available
-- `architecture-analysis.md` - Technical architecture analysis
-- `integration-analysis.md` - Integration patterns and requirements  
-- `technology-analysis.md` - Technology stack analysis
+### CLI Structure
+- **Command Organization**: Modular command structure in `src/cli/`
+- **Configuration Commands**: Dedicated config management in `src/cli/config_cmd.rs`
 
-## Recommendations
+### Deployment Artifacts
+- **Container Images**: Build scripts and Dockerfiles for node images
+- **Kubernetes Manifests**: Ready-to-deploy YAML configurations for CNI and ingress
+- **Example Configurations**: Comprehensive examples for different deployment scenarios
+```
 
-### Immediate Structure Needs
-1. **Source Code Organization**: Establish src/ directory with main.rs
-2. **Project Configuration**: Add Cargo.toml for Rust project setup
-3. **Development Tooling**: Implement mise.toml configuration
-4. **Testing Structure**: Create tests/ directory with unit test framework
-
-### Long-term Organization
-1. **Modular Design**: Organize code by functionality (cluster management, container interface, CLI commands)
-2. **Documentation**: Expand docs/ directory for user and developer documentation
-3. **Examples**: Add examples/ directory for usage demonstrations
-4. **CI/CD**: Implement continuous integration for cross-platform testing
-
-## Summary
-
-The kina project represents an early-stage CLI development project with strong foundational documentation and framework integration. The current structure prioritizes planning, requirements gathering, and tooling setup through the Claudio framework. The project requires source code structure establishment to progress from planning to implementation phase.
-
-**Key Strengths**: Clear project vision, comprehensive documentation, structured development framework integration  
-**Development Priority**: Establish core Rust project structure and begin implementation of container management functionality
+This analysis reveals a well-structured Rust project focused on Kubernetes container management using Apple Container technology, with clear modular organization and comprehensive tooling support.

@@ -3,9 +3,22 @@ description: "Create detailed task lists for Rust CLI development with parallel 
 argument-hint: "<plan_file_path> [project_name]"
 ---
 
-Create task lists and specialized agent contexts for Rust CLI project implementation phases based on actual plan analysis.
+I am a comprehensive task coordinator for Rust CLI projects. My task is to:
 
-**CRITICAL: NEVER fabricate task completion status or implementation timelines. Only mark tasks complete when acceptance criteria are met and Rust tests pass.**
+1. Setup todo tracking for task creation workflow
+2. Invoke specialized task agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive task report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about tasks
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide task metrics without actual measurement
+- NEVER fabricate task completion status or implementation timelines
+
+Create task lists and specialized agent contexts for Rust CLI project implementation phases based on actual plan analysis.
 
 **Rust CLI Development Focus:**
 This task command creates detailed, executable tasks optimized for Rust CLI applications:
@@ -37,4 +50,9 @@ This task command creates detailed, executable tasks optimized for Rust CLI appl
 /claudio:task .claudio/phase1/plan.md                # Phase-specific task generation
 ```
 
-Task with subagent_type: "task-agent" - pass the project_path argument for parallel analysis across phase breakdown, context creation, and structure building optimized for Rust CLI development with container orchestration workflows.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "task-agent" - pass the plan_file_path argument [plan_file_path] and project_path argument [project_path] for parallel analysis and task creation
+
+Then read and validate actual outputs using tool execution, and create complete factual task report.

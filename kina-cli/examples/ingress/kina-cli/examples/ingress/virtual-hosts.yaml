@@ -1,0 +1,283 @@
+# Virtual Hosts Example
+#
+# This example demonstrates:
+# - Multiple host-based routing in single ingress
+# - Different applications for different domains
+# - Shared ingress configuration
+#
+# Deploy with: kubectl apply -f virtual-hosts.yaml
+# Test with:
+#   curl -H "Host: webapp.local" http://<cluster-ip>
+#   curl -H "Host: api.local" http://<cluster-ip>
+#   curl -H "Host: blog.local" http://<cluster-ip>
+
+---
+# Main Web Application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: webapp-content
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: webapp-content
+        configMap:
+          name: webapp-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Main Web App</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: #e3f2fd; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🌐 Main Web Application</h1>
+            <p>Welcome to the main web application!</p>
+            <p><strong>Host:</strong> webapp.local</p>
+            <p><strong>Purpose:</strong> Customer-facing web application</p>
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service
+  namespace: default
+spec:
+  selector:
+    app: webapp
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# API Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-service-app
+  template:
+    metadata:
+      labels:
+        app: api-service-app
+    spec:
+      containers:
+      - name: httpd
+        image: httpd:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: api-content
+          mountPath: /usr/local/apache2/htdocs
+      volumes:
+      - name: api-content
+        configMap:
+          name: api-service-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-service-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>API Service</title>
+        <style>
+            body { font-family: 'Courier New', monospace; margin: 40px; background: #263238; color: #00e676; }
+            .container { max-width: 600px; margin: 0 auto; background: #37474f; padding: 30px; border-radius: 8px; border: 1px solid #00e676; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔌 API Service</h1>
+            <p>RESTful API service endpoint</p>
+            <p><strong>Host:</strong> api.local</p>
+            <p><strong>Purpose:</strong> REST API for mobile and web clients</p>
+            <p><strong>Status:</strong> <span style="color: #00e676;">●</span> Online</p>
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: default
+spec:
+  selector:
+    app: api-service-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Blog Application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blog-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blog-app
+  template:
+    metadata:
+      labels:
+        app: blog-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: blog-content
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: blog-content
+        configMap:
+          name: blog-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blog-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Company Blog</title>
+        <style>
+            body { font-family: Georgia, serif; margin: 40px; background: #fafafa; }
+            .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .header { border-bottom: 3px solid #ff6b35; padding-bottom: 20px; margin-bottom: 30px; }
+            .post { margin-bottom: 30px; padding: 20px; background: #f8f9fa; border-left: 4px solid #ff6b35; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📝 Company Blog</h1>
+                <p>Latest news and updates</p>
+            </div>
+            <div class="post">
+                <h2>Welcome to our Blog!</h2>
+                <p><strong>Host:</strong> blog.local</p>
+                <p><strong>Purpose:</strong> Company blog and news</p>
+                <p>This is where we share our latest updates, technical articles, and company news.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blog-service
+  namespace: default
+spec:
+  selector:
+    app: blog-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Virtual Hosts Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: virtual-hosts-ingress
+  namespace: default
+  annotations:
+    nginx.org/ssl-redirect: "false"
+    nginx.org/server-tokens: "false"
+    # Optional: Add custom headers
+    nginx.org/server-snippets: |
+      add_header X-Served-By "nginx-ingress" always;
+spec:
+  ingressClassName: nginx
+  rules:
+  # Main web application
+  - host: webapp.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: webapp-service
+            port:
+              number: 80
+
+  # API service
+  - host: api.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 80
+
+  # Blog application
+  - host: blog.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: blog-service
+            port:
+              number: 80

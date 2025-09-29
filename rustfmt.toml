@@ -1,0 +1,33 @@
+# rustfmt configuration for kina project
+# This file defines the formatting style for Rust code
+
+# Basic formatting options
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+
+# Import and use statement formatting
+reorder_imports = true
+
+# Function and method formatting
+fn_params_layout = "Tall"
+
+# Match expression formatting
+match_block_trailing_comma = false
+
+# Chain formatting
+chain_width = 60
+single_line_if_else_max_width = 50
+
+# Array and struct formatting
+array_width = 60
+
+# Miscellaneous
+newline_style = "Unix"
+remove_nested_parens = true
+use_field_init_shorthand = true
+use_try_shorthand = true
+force_explicit_abi = true
+
+# Error handling
+edition = "2021"

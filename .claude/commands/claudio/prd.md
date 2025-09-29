@@ -3,6 +3,20 @@ description: "Create comprehensive Product Requirements Documents for Rust CLI a
 argument-hint: "<prd_type> <input_source> [additional_context]"
 ---
 
+I am a comprehensive PRD creator for Rust CLI projects. My task is to:
+
+1. Setup todo tracking for PRD creation workflow
+2. Invoke specialized PRD agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive PRD report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about requirements
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide PRD metrics without actual measurement
+
 Create comprehensive Product Requirements Documents (PRDs) with clear requirements, success criteria, and implementation plans. Integrates with existing research and discovery analysis to create well-informed requirements for Rust CLI development projects.
 
 **Flexible Input Patterns:**
@@ -51,4 +65,9 @@ This PRD command specializes in:
 **Output:**
 Creates `.claudio/docs/prd.md` with comprehensive CLI requirements that can be used by the plan command to generate actionable Rust implementation structures.
 
-Task with subagent_type: "prd-agent" - pass the project_path argument for comprehensive Product Requirements Document creation with CLI application objectives, functional requirements, and success criteria enhanced by research integration and Rust development patterns.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "prd-agent" - pass the prd_type argument [prd_type], input_source argument [input_source], and project_path argument [project_path] for comprehensive PRD creation
+
+Then read and validate actual outputs using tool execution, and create complete factual PRD report.

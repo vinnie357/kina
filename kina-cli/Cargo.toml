@@ -1,0 +1,74 @@
+[package]
+name = "kina-cli"
+description = "Kubernetes in Apple Container - A Rust CLI for managing local Kubernetes clusters using Apple Container technology"
+readme = "README.md"
+
+# Inherit workspace configuration
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "kina"
+path = "src/main.rs"
+
+[lib]
+name = "kina_cli"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI Framework
+clap.workspace = true
+
+# Error Handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging and Tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+# Async Runtime
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# Date and Time
+chrono.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+toml.workspace = true
+
+# Configuration
+config.workspace = true
+directories.workspace = true
+dirs.workspace = true
+
+# Process Management
+tokio-process.workspace = true
+
+# Network and HTTP
+reqwest.workspace = true
+url.workspace = true
+
+# File System Operations
+walkdir.workspace = true
+tempfile.workspace = true
+
+# Unix system calls (for TTY detection)
+libc.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true

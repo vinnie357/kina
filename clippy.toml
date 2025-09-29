@@ -1,0 +1,27 @@
+# Clippy configuration for kina project
+# This file defines linting rules and thresholds
+
+# Complexity thresholds
+cognitive-complexity-threshold = 30
+type-complexity-threshold = 250
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 100
+
+# String handling
+max-suggested-slice-pattern-length = 3
+
+# Documentation requirements
+missing-docs-in-crate-items = true
+
+# Performance considerations
+enum-variant-size-threshold = 200
+
+# Avoid panic in production code
+avoid-breaking-exported-api = false
+
+# Allow certain common patterns in CLI applications
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+
+# Standard library usage preferences
+# Note: single-char-lifetime-names is not a valid clippy option

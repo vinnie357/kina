@@ -1,31 +1,37 @@
-# Discovery Troubleshooting for Rust CLI Application
+# Discovery Troubleshooting for Rust CLI Container Orchestration
 
 ## Common Issues
 
-### Rust Project Structure Not Detected
-**Problem**: Discovery fails to identify Rust project components
-**Solution**: Verify Cargo.toml presence in project root and check for src/ directory structure. For early-stage projects, create minimal Cargo.toml manifest.
+### Cargo Workspace Analysis Failures
+**Problem**: Discovery fails to parse complex workspace structures or dependencies
+**Solution**: Verify Cargo.toml workspace configuration syntax, check for valid member packages, and ensure all dependencies are properly declared. Use `cargo metadata --format-version 1` for validation.
 
-### Apple Container Runtime Missing
-**Problem**: Apple Container availability cannot be validated
-**Solution**: Verify macOS version 15.6+ and Apple Container CLI installation. Use `which container` to check availability and validate container runtime permissions.
+### Apple Container Runtime Detection Issues
+**Problem**: Apple Container availability cannot be validated or integrated
+**Solution**: Verify macOS 15.6+ compatibility, check container CLI installation with `which container`, validate runtime permissions, and test basic container operations.
 
-### Kubernetes Configuration Not Found
-**Problem**: Discovery cannot locate Kubernetes integration patterns
-**Solution**: Check for kubeconfig files, kubectl installation, and cluster configuration. Verify Kubernetes client library dependencies in planned Cargo.toml.
+### Kubernetes Client Integration Problems
+**Problem**: kube-rs dependencies not properly configured or Kubernetes API access fails
+**Solution**: Verify k8s-openapi version compatibility, check kubeconfig availability, validate cluster access with `kubectl cluster-info`, and ensure proper RBAC permissions.
 
-### CLI Framework Detection Issues
-**Problem**: Command-line interface patterns not properly identified
-**Solution**: Look for clap, structopt, or other CLI framework dependencies. Analyze main.rs for command parsing patterns and CLI application structure.
+### CLI Framework Pattern Recognition Failures
+**Problem**: Clap derive patterns or subcommand structures not detected
+**Solution**: Analyze clap version compatibility (4.5+), verify derive feature enablement, check for custom CLI patterns, and validate argument parsing implementation.
+
+### Async Runtime Configuration Issues
+**Problem**: Tokio async patterns not properly identified or configured
+**Solution**: Verify Tokio version compatibility (1.47+), check for proper async/await usage, validate runtime initialization with `#[tokio::main]`, and ensure error handling integration.
 
 ## Debug Strategies
-- **Cargo Analysis**: Use `cargo metadata` to extract dependency information and workspace structure
-- **Platform Validation**: Verify Apple Container runtime with `container --version` and system compatibility
-- **Kubernetes Testing**: Test kubectl connectivity and cluster access for integration validation
-- **Development Environment**: Validate mise configuration and development tool availability
+- **Workspace Validation**: Use `cargo check --workspace` to validate project structure and dependencies
+- **Container Runtime Testing**: Execute `container --version` and basic container operations for integration validation
+- **Kubernetes Connectivity**: Test cluster access with `kubectl get nodes` and API client connectivity
+- **CLI Framework Testing**: Validate clap patterns with `cargo run -- --help` and subcommand functionality
+- **Development Environment**: Check mise configuration, tool availability, and development workflow execution
 
 ## Getting Help
-- **Rust Community**: Rust Users Forum and official documentation for CLI development patterns
-- **Apple Container**: Apple Developer documentation for container runtime integration
-- **Kubernetes**: Official Kubernetes documentation and kubectl reference guides
-- **Project Resources**: README.md and .claudio/docs/ analysis documents for project-specific guidance
+- **Rust Cargo**: cargo book and workspace documentation for complex project structures
+- **Apple Container**: Apple Developer container runtime documentation and integration guides
+- **Kubernetes Client**: kube-rs documentation and Kubernetes API reference for client integration
+- **CLI Development**: clap documentation and Rust CLI book for command-line application patterns
+- **Project Specific**: .claudio/docs/discovery.md for detailed project analysis and technology assessment

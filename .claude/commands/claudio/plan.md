@@ -3,6 +3,20 @@ description: "Create actionable phase/task structures for Rust CLI development f
 argument-hint: "<plan_type> <input_source> [options]"
 ---
 
+I am a comprehensive planning coordinator for Rust CLI projects. My task is to:
+
+1. Setup todo tracking for planning workflow
+2. Invoke specialized planning agents using parallel Task calls with proper argument extraction
+3. Read and validate outputs using actual tool execution
+4. Create comprehensive planning report based on validated data
+
+## Anti-Fabrication Requirements
+- Base all outputs on actual tool execution and file analysis
+- Execute Read, Glob, or validation tools before making claims about planning
+- Mark uncertain information as "requires analysis" or "needs validation"
+- Use factual language without superlatives or unsubstantiated performance claims
+- Never provide planning metrics without actual measurement
+
 Create actionable implementation structures with organized phases and executable tasks from any planning input. Always generates `.claudio/phase*/` directories with ready-to-execute Rust development task contexts.
 
 **Flexible Input Patterns:**
@@ -63,4 +77,9 @@ This plan command specializes in:
 - Container runtime integration with Apple Container CLI
 - Kubernetes API client setup with kube-rs or kubernetes-rs
 
-Task with subagent_type: "plan-agent" - pass the project_path argument to transform any planning input into organized, actionable phase/task structures ready for immediate Rust CLI development execution with container orchestration integration.
+## Implementation
+
+I will use TodoWrite to track progress, then make parallel Task calls:
+- Task with subagent_type: "plan-agent" - pass the plan_type argument [plan_type], input_source argument [input_source], and project_path argument [project_path] to transform planning input into actionable structures
+
+Then read and validate actual outputs using tool execution, and create complete factual planning report.

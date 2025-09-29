@@ -1,0 +1,144 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kindnet
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  verbs:
+  - list
+  - watch
+  - patch
+- apiGroups: [""]
+  resources:
+  - nodes/proxy
+  verbs:
+  - get
+- apiGroups: [""]
+  resources:
+  - pods
+  - namespaces
+  verbs:
+  - list
+- apiGroups: ["networking.k8s.io"]
+  resources:
+  - networkpolicies
+  verbs:
+  - list
+  - watch
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kindnet
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kindnet
+subjects:
+- kind: ServiceAccount
+  name: kindnet
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kindnet
+  namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kindnet
+  namespace: kube-system
+  labels:
+    tier: node
+    app: kindnet
+    k8s-app: kindnet
+spec:
+  selector:
+    matchLabels:
+      app: kindnet
+  template:
+    metadata:
+      labels:
+        tier: node
+        app: kindnet
+        k8s-app: kindnet
+    spec:
+      hostNetwork: true
+      tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - key: CriticalAddonsOnly
+        operator: Exists
+      - operator: Exists
+        effect: NoExecute
+      serviceAccountName: kindnet
+      priorityClassName: system-node-critical
+      containers:
+      - name: kindnetd
+        image: ghcr.io/aojea/kindnetd:stable
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        command:
+        - /bin/kindnetd
+        - --hostname-override=$(NODE_NAME)
+        - --network-policy=true
+        - --masquerading=true
+        - --dns-caching=true
+        - --nat64=false
+        - --v=2
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "50Mi"
+          limits:
+            cpu: "100m"
+            memory: "50Mi"
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        volumeMounts:
+        - name: cni-cfg
+          mountPath: /etc/cni/net.d
+        - name: xtables-lock
+          mountPath: /run/xtables.lock
+          readOnly: false
+        - name: lib-modules
+          mountPath: /lib/modules
+          readOnly: true
+        - name: netns
+          mountPath: /var/run/netns
+          mountPropagation: Bidirectional
+      volumes:
+      - name: cni-cfg
+        hostPath:
+          path: /etc/cni/net.d
+      - name: xtables-lock
+        hostPath:
+          path: /run/xtables.lock
+          type: FileOrCreate
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: netns
+        hostPath:
+          path: /var/run/netns
+          type: DirectoryOrCreate
+      nodeSelector:
+        kubernetes.io/os: linux
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
