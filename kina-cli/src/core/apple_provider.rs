@@ -85,14 +85,8 @@ impl AppleContainerProvider {
             }
         }
 
-        // Try to find in PATH
-        let possible_names = [
-            "apple-container",
-            "ac",
-            "container",
-            "podman", // Fallback for testing
-            "docker", // Ultimate fallback for development
-        ];
+        // Try to find in PATH — only Apple Container CLI names
+        let possible_names = ["container", "apple-container"];
 
         for name in &possible_names {
             if let Ok(output) = Command::new("which").arg(name).output().await {
@@ -127,13 +121,13 @@ impl AppleContainerProvider {
     async fn ensure_cluster_network(&self, cluster_name: &str) -> KinaResult<ContainerNetwork> {
         let network_name = format!("{}-{}", KINA_NETWORK_PREFIX, cluster_name);
 
-        // Check if network already exists
+        // Check if network already exists using JSON output
         let mut list_cmd = Command::new(&self.cli_path);
         list_cmd
             .arg("network")
-            .arg("ls")
+            .arg("list")
             .arg("--format")
-            .arg("{{.Name}}")
+            .arg("json")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -143,11 +137,22 @@ impl AppleContainerProvider {
             })
         })?;
 
-        let existing_networks = String::from_utf8_lossy(&list_output.stdout);
-        if existing_networks
-            .lines()
-            .any(|line| line.trim() == network_name)
-        {
+        let stdout = String::from_utf8_lossy(&list_output.stdout);
+        let network_exists = if list_output.status.success() && !stdout.trim().is_empty() {
+            if let Ok(networks) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout) {
+                networks.iter().any(|n| {
+                    n.get("name")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|name| name == network_name)
+                })
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if network_exists {
             self.logger
                 .debug(&format!("Network {} already exists", network_name));
             return Ok(ContainerNetwork {
@@ -332,13 +337,11 @@ impl AppleContainerProvider {
         })
     }
 
-    /// Get container IP address
+    /// Get container IP address using inspect JSON output
     async fn get_container_ip(&self, container_id: &str) -> KinaResult<Option<String>> {
         let mut inspect_cmd = Command::new(&self.cli_path);
         inspect_cmd
             .arg("inspect")
-            .arg("--format")
-            .arg("{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
             .arg(container_id)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -350,9 +353,21 @@ impl AppleContainerProvider {
         })?;
 
         if output.status.success() {
-            let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !ip.is_empty() && ip != "<no value>" {
-                return Ok(Some(ip));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(container) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                // Extract IP from networks[0].address, stripping CIDR suffix
+                if let Some(address) = container
+                    .get("networks")
+                    .and_then(|n| n.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|n| n.get("address"))
+                    .and_then(|a| a.as_str())
+                {
+                    let ip = address.split('/').next().unwrap_or(address);
+                    if !ip.is_empty() {
+                        return Ok(Some(ip.to_string()));
+                    }
+                }
             }
         }
 
@@ -389,10 +404,9 @@ impl ContainerProvider for AppleContainerProvider {
         let mut list_cmd = Command::new(&self.cli_path);
         list_cmd
             .arg("list")
-            .arg("--filter")
-            .arg(format!("label={}={}", CONTAINER_LABEL_CLUSTER, cluster))
+            .arg("--all")
             .arg("--format")
-            .arg("table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Labels}}")
+            .arg("json")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -414,30 +428,65 @@ impl ContainerProvider for AppleContainerProvider {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut nodes = Vec::new();
 
-        // Skip header line
-        for line in stdout.lines().skip(1) {
-            if line.trim().is_empty() {
+        let containers: Vec<serde_json::Value> = if stdout.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&stdout).map_err(|e| {
+                KinaError::AppleContainer(AppleContainerError::RuntimeError {
+                    reason: format!("Failed to parse container list JSON: {}", e),
+                })
+            })?
+        };
+
+        for container in containers {
+            // Filter by kina cluster label
+            let labels = container
+                .get("configuration")
+                .and_then(|c| c.get("labels"))
+                .and_then(|l| l.as_object());
+
+            let Some(labels) = labels else { continue };
+
+            let cluster_label = labels.get(CONTAINER_LABEL_CLUSTER).and_then(|v| v.as_str());
+
+            if cluster_label != Some(cluster) {
                 continue;
             }
 
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 4 {
-                continue;
-            }
+            let container_id = container
+                .get("configuration")
+                .and_then(|c| c.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
 
-            let container_id = parts[0].trim().to_string();
-            let name = parts[1].trim().to_string();
-            let status = parts[2].trim().to_string();
-            let labels = parts[3].trim();
+            let name = container_id.clone();
 
-            // Parse role from labels
-            let role = if labels.contains(&format!("{}=control-plane", CONTAINER_LABEL_ROLE)) {
+            let status = container
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let role_str = labels
+                .get(CONTAINER_LABEL_ROLE)
+                .and_then(|v| v.as_str())
+                .unwrap_or("worker");
+
+            let role = if role_str.contains("control-plane") {
                 NodeRole::ControlPlane
             } else {
                 NodeRole::Worker
             };
 
-            let ip_address = self.get_container_ip(&container_id).await?;
+            // Extract IP from networks array, stripping CIDR suffix
+            let ip_address = container
+                .get("networks")
+                .and_then(|n| n.as_array())
+                .and_then(|a| a.first())
+                .and_then(|n| n.get("address"))
+                .and_then(|a| a.as_str())
+                .map(|addr| addr.split('/').next().unwrap_or(addr).to_string());
 
             nodes.push(Node {
                 name,
@@ -445,7 +494,7 @@ impl ContainerProvider for AppleContainerProvider {
                 container_id,
                 ip_address,
                 status,
-                kubernetes_version: None, // To be determined by health checks
+                kubernetes_version: None,
                 cluster_name: cluster.to_string(),
             });
         }
@@ -459,8 +508,8 @@ impl ContainerProvider for AppleContainerProvider {
             .map(|node| async {
                 let mut delete_cmd = Command::new(&self.cli_path);
                 delete_cmd
-                    .arg("rm")
-                    .arg("-f") // Force removal
+                    .arg("delete")
+                    .arg("--force")
                     .arg(&node.container_id)
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -668,10 +717,9 @@ impl ContainerProvider for AppleContainerProvider {
         let mut list_cmd = Command::new(&self.cli_path);
         list_cmd
             .arg("list")
-            .arg("--filter")
-            .arg(format!("label={}", CONTAINER_LABEL_CLUSTER))
+            .arg("--all")
             .arg("--format")
-            .arg(format!("{{{{.Label \"{}\"}}}}", CONTAINER_LABEL_CLUSTER))
+            .arg("json")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -686,15 +734,22 @@ impl ContainerProvider for AppleContainerProvider {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut clusters: Vec<String> = stdout
-            .lines()
-            .filter_map(|line| {
-                let cluster = line.trim();
-                if cluster.is_empty() {
-                    None
-                } else {
-                    Some(cluster.to_string())
-                }
+        let containers: Vec<serde_json::Value> = if stdout.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&stdout).unwrap_or_default()
+        };
+
+        let mut clusters: Vec<String> = containers
+            .iter()
+            .filter_map(|container| {
+                container
+                    .get("configuration")
+                    .and_then(|c| c.get("labels"))
+                    .and_then(|l| l.as_object())
+                    .and_then(|labels| labels.get(CONTAINER_LABEL_CLUSTER))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
             })
             .collect();
 
@@ -759,7 +814,7 @@ impl ContainerProvider for AppleContainerProvider {
         let mut network_rm_cmd = Command::new(&self.cli_path);
         network_rm_cmd
             .arg("network")
-            .arg("rm")
+            .arg("delete")
             .arg(&network_name)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

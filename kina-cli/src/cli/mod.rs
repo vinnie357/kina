@@ -76,14 +76,6 @@ pub enum Commands {
 
 impl Cli {
     pub async fn execute(&self, config: &Config) -> Result<()> {
-        // Set up logging based on verbosity
-        if self.verbose {
-            // Increase logging level for verbose mode
-            // This would typically adjust the tracing subscriber
-        } else if self.quiet {
-            // Suppress most output for quiet mode
-        }
-
         // Execute the subcommand
         match &self.command {
             Some(Commands::Create(args)) => args.execute(config).await,
