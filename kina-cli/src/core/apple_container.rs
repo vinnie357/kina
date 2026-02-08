@@ -929,17 +929,17 @@ impl AppleContainerClient {
             image, container_id
         );
 
-        // First, save the image to a tar file
+        // First, save the image to a tar file using Apple Container's native image save
         let temp_dir = std::env::temp_dir();
         let image_tar = temp_dir.join(format!("{}.tar", image.replace(['/', ':'], "_")));
 
-        // Export the image
-        let mut cmd = std::process::Command::new("docker");
-        cmd.args(["save", "-o", &image_tar.to_string_lossy(), image]);
+        // Export the image using container image save
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["image", "save", image, "-o", &image_tar.to_string_lossy()]);
 
         let output = cmd
             .output()
-            .context("Failed to export image with docker save")?;
+            .context("Failed to export image with container image save")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!("Failed to export image: {}", stderr));

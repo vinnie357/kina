@@ -14,15 +14,24 @@ use config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing subscriber for logging
+    // Parse command line arguments first so we can set log level
+    let cli = Cli::parse();
+
+    // Initialize tracing subscriber — write to stderr so stdout stays clean for JSON/machine output
+    let log_level = if cli.quiet {
+        Level::ERROR
+    } else if cli.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_max_level(log_level)
+        .with_writer(std::io::stderr)
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-
-    // Parse command line arguments
-    let cli = Cli::parse();
 
     // Load configuration - respect the --config flag if provided
     let config = if let Some(config_path) = &cli.config {
