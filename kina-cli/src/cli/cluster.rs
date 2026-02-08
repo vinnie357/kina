@@ -644,6 +644,7 @@ impl ExportArgs {
 impl StatusArgs {
     pub async fn execute(&self, config: &Config) -> Result<()> {
         let cluster_manager = ClusterManager::new(config)?;
+        let container_version = cluster_manager.container_version().to_string();
 
         // Handle the case where a specific cluster name is provided
         if let Some(cluster_name) = &self.name {
@@ -651,12 +652,29 @@ impl StatusArgs {
             let cluster_info = cluster_manager.get_cluster_status(cluster_name).await?;
 
             match self.output {
-                StatusOutputFormat::Table => self.print_table_format(&cluster_info, config).await?,
+                StatusOutputFormat::Table => {
+                    self.print_table_format(&cluster_info, config, &container_version)
+                        .await?
+                }
                 StatusOutputFormat::Yaml => {
-                    println!("{}", serde_yaml::to_string(&cluster_info)?);
+                    let mut map = serde_json::to_value(&cluster_info)?;
+                    if let Some(obj) = map.as_object_mut() {
+                        obj.insert(
+                            "apple_container_version".to_string(),
+                            serde_json::Value::String(container_version.clone()),
+                        );
+                    }
+                    println!("{}", serde_yaml::to_string(&map)?);
                 }
                 StatusOutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&cluster_info)?);
+                    let mut map = serde_json::to_value(&cluster_info)?;
+                    if let Some(obj) = map.as_object_mut() {
+                        obj.insert(
+                            "apple_container_version".to_string(),
+                            serde_json::Value::String(container_version.clone()),
+                        );
+                    }
+                    println!("{}", serde_json::to_string_pretty(&map)?);
                 }
             }
 
@@ -706,12 +724,29 @@ impl StatusArgs {
         let cluster_info = cluster_manager.get_cluster_status(&cluster_name).await?;
 
         match self.output {
-            StatusOutputFormat::Table => self.print_table_format(&cluster_info, config).await?,
+            StatusOutputFormat::Table => {
+                self.print_table_format(&cluster_info, config, &container_version)
+                    .await?
+            }
             StatusOutputFormat::Yaml => {
-                println!("{}", serde_yaml::to_string(&cluster_info)?);
+                let mut map = serde_json::to_value(&cluster_info)?;
+                if let Some(obj) = map.as_object_mut() {
+                    obj.insert(
+                        "apple_container_version".to_string(),
+                        serde_json::Value::String(container_version.clone()),
+                    );
+                }
+                println!("{}", serde_yaml::to_string(&map)?);
             }
             StatusOutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&cluster_info)?);
+                let mut map = serde_json::to_value(&cluster_info)?;
+                if let Some(obj) = map.as_object_mut() {
+                    obj.insert(
+                        "apple_container_version".to_string(),
+                        serde_json::Value::String(container_version.clone()),
+                    );
+                }
+                println!("{}", serde_json::to_string_pretty(&map)?);
             }
         }
 
@@ -752,10 +787,16 @@ impl StatusArgs {
         }
     }
 
-    async fn print_table_format(&self, cluster_info: &ClusterInfo, config: &Config) -> Result<()> {
+    async fn print_table_format(
+        &self,
+        cluster_info: &ClusterInfo,
+        config: &Config,
+        container_version: &str,
+    ) -> Result<()> {
         println!("Cluster: {}", cluster_info.name);
         println!("Status: {}", cluster_info.status);
         println!("Image: {}", cluster_info.image);
+        println!("Apple Container: {}", container_version);
         println!("Created: {}", cluster_info.created);
 
         if let Some(kubeconfig) = &cluster_info.kubeconfig_path {

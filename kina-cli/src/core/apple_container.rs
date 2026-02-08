@@ -8,10 +8,14 @@ use super::types::{
 };
 use crate::config::Config;
 
+/// Minimum supported Apple Container version (major, minor, patch)
+const MIN_VERSION: (u32, u32, u32) = (0, 5, 0);
+
 /// Client for interacting with Apple Container
 pub struct AppleContainerClient {
     config: Config,
     cli_path: String,
+    container_version: String,
 }
 
 impl AppleContainerClient {
@@ -24,10 +28,104 @@ impl AppleContainerClient {
             Self::detect_cli_path()?
         };
 
+        let container_version = Self::detect_version(&cli_path)?;
+        Self::validate_version(&container_version)?;
+
         Ok(Self {
             config: config.clone(),
             cli_path,
+            container_version,
         })
+    }
+
+    /// Get the detected Apple Container CLI version
+    pub fn version(&self) -> &str {
+        &self.container_version
+    }
+
+    /// Detect the Apple Container CLI version by running `<cli_path> --version`
+    fn detect_version(cli_path: &str) -> Result<String> {
+        let output = std::process::Command::new(cli_path)
+            .arg("--version")
+            .output()
+            .context("Failed to execute Apple Container CLI for version detection")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "Apple Container CLI version check failed: {}",
+                stderr
+            ));
+        }
+
+        // Parse version from output like: "container CLI version 0.5.0 (build: release, commit: 48230f3)"
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let version_str = stdout.trim();
+
+        // Look for the version number after "version "
+        if let Some(pos) = version_str.find("version ") {
+            let after_version = &version_str[pos + "version ".len()..];
+            // Take everything up to the next space or end of string
+            let version = after_version
+                .split_whitespace()
+                .next()
+                .unwrap_or(after_version);
+            debug!("Detected Apple Container CLI version: {}", version);
+            return Ok(version.to_string());
+        }
+
+        Err(anyhow::anyhow!(
+            "Could not parse Apple Container CLI version from output: {}",
+            version_str
+        ))
+    }
+
+    /// Validate that the detected version meets the minimum requirement
+    fn validate_version(version: &str) -> Result<()> {
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() < 2 {
+            return Err(anyhow::anyhow!(
+                "Invalid Apple Container CLI version format: {}",
+                version
+            ));
+        }
+
+        let major = parts[0]
+            .parse::<u32>()
+            .context("Invalid major version number")?;
+        let minor = parts[1]
+            .parse::<u32>()
+            .context("Invalid minor version number")?;
+        let patch = parts
+            .get(2)
+            .and_then(|p| p.parse::<u32>().ok())
+            .unwrap_or(0);
+
+        let (min_major, min_minor, min_patch) = MIN_VERSION;
+
+        let meets_minimum = (major, minor, patch) >= (min_major, min_minor, min_patch);
+
+        if !meets_minimum {
+            return Err(anyhow::anyhow!(
+                "Apple Container CLI version {} is not supported. \
+                 Minimum required version is {}.{}.{}.\n\
+                 Breaking changes in 0.5.0:\n\
+                 - 'container images' replaced by 'container image'\n\
+                 - Keychain ID changed to 'com.apple.container.registry'\n\
+                 - System properties consolidated to 'container system property'\n\
+                 Please upgrade Apple Container to continue.",
+                version,
+                min_major,
+                min_minor,
+                min_patch
+            ));
+        }
+
+        info!(
+            "Apple Container CLI version {} meets minimum requirement ({}.{}.{})",
+            version, min_major, min_minor, min_patch
+        );
+        Ok(())
     }
 
     /// Detect Apple Container CLI path
