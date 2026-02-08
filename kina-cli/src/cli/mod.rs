@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
+use crate::core::cluster::ClusterManager;
 
 mod cluster;
 mod config_cmd;
@@ -89,7 +90,16 @@ impl Cli {
             Some(Commands::ApproveCSR(args)) => args.execute(config).await,
             Some(Commands::Config(args)) => args.execute(config).await,
             None => {
-                // No subcommand provided, show help
+                println!("kina {}", env!("CARGO_PKG_VERSION"));
+                match ClusterManager::new(config) {
+                    Ok(manager) => {
+                        println!("Apple Container {}", manager.container_version());
+                    }
+                    Err(e) => {
+                        println!("Apple Container: not available ({})", e);
+                    }
+                }
+                println!();
                 println!("Use --help to see available commands");
                 Ok(())
             }

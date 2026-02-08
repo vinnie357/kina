@@ -26,6 +26,11 @@ impl ClusterManager {
         })
     }
 
+    /// Get the detected Apple Container CLI version
+    pub fn container_version(&self) -> &str {
+        self.apple_container.version()
+    }
+
     /// Create a new Kubernetes cluster
     pub async fn create_cluster(&self, options: CreateClusterOptions) -> Result<()> {
         info!(
