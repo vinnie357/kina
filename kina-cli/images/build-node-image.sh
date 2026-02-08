@@ -29,12 +29,12 @@ cd "$SCRIPT_DIR"
 container build -t "$IMAGE_TAG" .
 
 # Verify the image was built successfully
-if container images list | grep -q "$IMAGE_TAG"; then
+if container image list | grep -q "$IMAGE_TAG"; then
     echo "✅ Successfully built image: $IMAGE_TAG"
 
     # Show image details
     echo "📋 Image details:"
-    container images inspect "$IMAGE_TAG" | jq -r '.[] | "  Size: \(.size // "unknown") | Created: \(.created // "unknown")"'
+    container image inspect "$IMAGE_TAG" | jq -r '.[] | "  Size: \(.size // "unknown") | Created: \(.created // "unknown")"'
 
     echo ""
     echo "🎉 Build complete! You can now use this image with kina:"
