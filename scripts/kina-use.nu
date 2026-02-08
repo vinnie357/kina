@@ -4,10 +4,10 @@ def log [msg: string] { print $"(ansi green)[INFO](ansi reset) ($msg)" }
 def warn [msg: string] { print $"(ansi yellow)[WARN](ansi reset) ($msg)" }
 def err [msg: string] { print $"(ansi red)[ERROR](ansi reset) ($msg)"; exit 1 }
 
-mut selected_cluster = ($env | get -i usage_cluster | default "")
+let arg_cluster = ($env | get --optional usage_cluster | default "")
 
-if ($selected_cluster | is-empty) {
-    # Auto-detect running clusters
+# Resolve cluster name: use argument or auto-detect
+let selected_cluster = if ($arg_cluster | is-empty) {
     let list_result = (do { ^cargo run --release --quiet --manifest-path kina-cli/Cargo.toml -- --quiet list } | complete)
     let clusters = ($list_result.stdout | lines | where { |l| not ($l starts-with "No clusters") and not ($l | is-empty) })
 
@@ -18,13 +18,16 @@ if ($selected_cluster | is-empty) {
     let count = ($clusters | length)
 
     if $count == 1 {
-        $selected_cluster = ($clusters | first)
-        log $"Auto-selected cluster: (ansi cyan)($selected_cluster)(ansi reset)"
+        let name = ($clusters | first)
+        log $"Auto-selected cluster: (ansi cyan)($name)(ansi reset)"
+        $name
     } else {
         print $"(ansi yellow)Multiple clusters found:(ansi reset)"
         for c in $clusters { print $"  - ($c)" }
         err "Specify a cluster name: mise run kina:use <cluster-name>"
     }
+} else {
+    $arg_cluster
 }
 
 # Verify cluster exists
