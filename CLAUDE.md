@@ -6,41 +6,23 @@
 **Domain**: Kubernetes orchestration and container management for macOS using Apple Container technology
 **Development Phase**: Active development with established project structure, comprehensive tooling, and advanced development practices
 
-## Available Agents
+## Task Tracking
+Project tasks are tracked with **beads** (`bd`), a distributed git-backed issue tracker.
+See [AGENTS.md](AGENTS.md) for beads workflow, session completion rules, and `bd` commands.
+- Tasks stored in `.beads/` directory, synced via git
+- Use `bd ready` to find actionable tasks with no blockers
+- Use `bd list` to see all open tasks
+- Workflow: one task = one branch = one PR
+- Commit format: `type(scope): description` (no Co-Authored-By)
 
-### Workflow Agents
-- **discovery-agent**: Rust CLI project analysis with Cargo.toml analysis, container integration assessment
-- **prd-agent**: Product requirements for CLI command structure and Kubernetes API specifications
-- **plan-agent**: Implementation planning with Cargo workspace setup and container integration milestones
-- **task-agent**: Task breakdown for module scaffolding and container runtime integration
-- **research-specialist**: Research for CLI frameworks (clap, structopt), Kubernetes clients (kube-rs), container APIs
-
-### Development Agents
-- **code-quality-analyzer**: Rust code quality with rustfmt, clippy, cargo-audit, CLI-specific patterns
-- **implement-agent**: Execute Rust CLI implementation with Cargo project execution and Kubernetes client integration
-- **test-review**: Cargo test patterns, CLI testing, container integration testing recommendations
-- **kina-test-runner**: Project-specific test execution for Rust CLI and Apple Container integration
-
-### Security Agents
-- **security-review-coordinator**: STRIDE methodology for Rust CLI and container orchestration security
-- **security-threat-modeler**: CLI attack vectors, container security threats, Kubernetes integration analysis
-- **security-architecture-analyst**: CLI security architecture, container integration security, RBAC patterns
-- **vulnerability-assessment-specialist**: Rust dependency scanning, Kubernetes manifest analysis
-- **security-diagram-generator**: Mermaid diagrams for CLI threat models and RBAC visualization
-
-### Documentation Agents
-- **documentation-coordinator**: Rust CLI documentation strategy coordination
-- **documentation-readme-creator**: CLI installation guides and container orchestration workflows
-- **documentation-api-creator**: Command reference and Kubernetes client usage patterns
-- **documentation-user-guide-creator**: CLI workflow tutorials and container management guides
-- **documentation-developer-guide-creator**: Rust CLI architecture and contribution guidelines
-
-## Extended Context Structure
-- **workflow/**: Discovery analysis, requirements definition, implementation planning, task breakdown
-- **development/**: Code quality patterns, security frameworks, testing strategies
-- **documentation/**: Generation templates and structured documentation patterns
-- **research/**: Research methodology for CLI frameworks and container integration
-- **templates/**: Agent architecture and workflow integration patterns
+## Project Structure
+- **kina-cli/src/**: Rust CLI source (cli/, core/, config/, errors/, utils/)
+- **kina-cli/tests/**: CLI and config tests
+- **kina-cli/manifests/**: Kubernetes manifests (nginx-ingress)
+- **kina-cli/images/**: Custom node image Dockerfile and build scripts
+- **docs/research/**: Apple Container, KIND, CNI/Cilium research
+- **docs/planning/**: PRD and implementation plan
+- **docs/development/**: Testing patterns
 
 ## AI Assistant Guidance
 
@@ -50,10 +32,10 @@
 - **Kubernetes Operations**: Consider kube-rs client patterns, RBAC configuration, resource management
 - **CLI Patterns**: Focus on command parsing, configuration management, output formatting
 
-### Integration Patterns
-- **Extended Context**: Reference Rust-specific patterns from workflow and development contexts
-- **Agent Coordination**: Use specialized agents for container security and Kubernetes integration analysis
-- **Discovery-Driven**: Base recommendations on actual project structure analysis from discovery findings
+### Workflow
+- **Beads-driven**: Use `bd ready` to find tasks, `bd update <id> --status in_progress` to claim
+- **Branch per task**: `git checkout main && git pull` then `git checkout -b type/description`
+- **Research-backed**: Reference docs/research/ for architecture decisions and constraints
 
 ### Anti-Fabrication Requirements
 All AI assistants working on this project MUST adhere to strict factual accuracy:
@@ -64,7 +46,7 @@ All AI assistants working on this project MUST adhere to strict factual accuracy
 - Never fabricate time estimates, effort calculations, or completion timelines without measurement
 
 ### Development Context
-- **Current State**: Active development requiring Rust project structure enhancement and Apple Container integration
-- **Technology Requirements**: macOS 15.6+, Apple Container runtime, kubectl integration
-- **Development Priorities**: CLI command architecture refinement, container runtime optimization, Kubernetes client implementation
+- **Current State**: Phase 1-2 complete (infrastructure, provider, CLI, lifecycle management). Working on multi-node orchestration and advanced features.
+- **Technology Requirements**: macOS 26+, Apple Container 0.5.0+, kubectl, mise, Nushell
+- **Development Priorities**: Multi-node cluster support, CI pipeline with act/colima, advanced networking
 - **Integration Goals**: Kind (Kubernetes in Docker) workflow compatibility using Apple Container technology
