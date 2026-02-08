@@ -217,7 +217,7 @@ echo "🔨 Building with Apple Container..."
 container build -t "$IMAGE_TAG" .
 
 # Verify the image was built successfully
-if container images list | grep -q "$IMAGE_TAG"; then
+if container image list | grep -q "$IMAGE_TAG"; then
     echo "✅ Successfully built image: $IMAGE_TAG"
     echo "📋 Image available for kina clusters"
 else
@@ -233,7 +233,7 @@ echo "🎉 Build complete! Use with: mise run kina create my-cluster --image $IM
 description = "List available container images"
 run = '''
 echo "📋 Available Apple Container images:"
-container images list
+container image list
 '''
 
 [tasks.clean-images]
@@ -241,7 +241,7 @@ description = "Clean up unused container images"
 run = '''
 echo "🧹 Cleaning up unused images..."
 echo "This will remove dangling images only (safe operation)"
-container images prune -f || echo "No images to clean"
+container image prune -f || echo "No images to clean"
 echo "✅ Image cleanup complete"
 '''
 
@@ -252,7 +252,7 @@ IMAGE_TAG="kina/node:v1.31.0"
 echo "🧪 Testing node image: $IMAGE_TAG"
 
 # Check if image exists
-if ! container images list | grep -q "$IMAGE_TAG"; then
+if ! container image list | grep -q "$IMAGE_TAG"; then
     echo "❌ Image $IMAGE_TAG not found. Run 'mise run build-node-image' first."
     exit 1
 fi
