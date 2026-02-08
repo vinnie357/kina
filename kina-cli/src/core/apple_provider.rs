@@ -169,7 +169,7 @@ impl AppleContainerProvider {
             .arg("--subnet")
             .arg("172.20.0.0/16")
             .arg("--label")
-            .arg(&format!("{}={}", CONTAINER_LABEL_CLUSTER, cluster_name))
+            .arg(format!("{}={}", CONTAINER_LABEL_CLUSTER, cluster_name))
             .arg(&network_name)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -233,9 +233,9 @@ impl AppleContainerProvider {
             .arg(&network.name)
             .arg("--privileged") // Required for systemd
             .arg("--label")
-            .arg(&format!("{}={}", CONTAINER_LABEL_CLUSTER, cluster_config.name))
+            .arg(format!("{}={}", CONTAINER_LABEL_CLUSTER, cluster_config.name))
             .arg("--label")
-            .arg(&format!("{}={}", CONTAINER_LABEL_ROLE, node_config.role))
+            .arg(format!("{}={}", CONTAINER_LABEL_ROLE, node_config.role))
             // Essential volume mounts for Kubernetes
             .arg("--volume")
             .arg("/var/lib/kubelet:/var/lib/kubelet")
@@ -273,7 +273,7 @@ impl AppleContainerProvider {
         // Add environment variables from runtime config
         if let Some(runtime_config) = &cluster_config.runtime_config {
             for (key, value) in &runtime_config.environment {
-                create_cmd.arg("--env").arg(&format!("{}={}", key, value));
+                create_cmd.arg("--env").arg(format!("{}={}", key, value));
             }
         }
 
@@ -390,7 +390,7 @@ impl ContainerProvider for AppleContainerProvider {
         list_cmd
             .arg("list")
             .arg("--filter")
-            .arg(&format!("label={}={}", CONTAINER_LABEL_CLUSTER, cluster))
+            .arg(format!("label={}={}", CONTAINER_LABEL_CLUSTER, cluster))
             .arg("--format")
             .arg("table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Labels}}")
             .stdout(Stdio::piped())
@@ -604,18 +604,18 @@ impl ContainerProvider for AppleContainerProvider {
         content: &str,
     ) -> KinaResult<()> {
         // Create a temporary file with the content
-        let temp_file = tempfile::NamedTempFile::new().map_err(|e| KinaError::Io(e))?;
+        let temp_file = tempfile::NamedTempFile::new().map_err(KinaError::Io)?;
 
         tokio::fs::write(temp_file.path(), content)
             .await
-            .map_err(|e| KinaError::Io(e))?;
+            .map_err(KinaError::Io)?;
 
         // Copy file to container
         let mut copy_cmd = Command::new(&self.cli_path);
         copy_cmd
             .arg("cp")
             .arg(temp_file.path())
-            .arg(&format!("{}:{}", container_id, path))
+            .arg(format!("{}:{}", container_id, path))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -641,7 +641,7 @@ impl ContainerProvider for AppleContainerProvider {
         let mut copy_cmd = Command::new(&self.cli_path);
         copy_cmd
             .arg("cp")
-            .arg(&format!("{}:{}", container_id, path))
+            .arg(format!("{}:{}", container_id, path))
             .arg("-")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -669,9 +669,9 @@ impl ContainerProvider for AppleContainerProvider {
         list_cmd
             .arg("list")
             .arg("--filter")
-            .arg(&format!("label={}", CONTAINER_LABEL_CLUSTER))
+            .arg(format!("label={}", CONTAINER_LABEL_CLUSTER))
             .arg("--format")
-            .arg(&format!("{{{{.Label \"{}\"}}}}", CONTAINER_LABEL_CLUSTER))
+            .arg(format!("{{{{.Label \"{}\"}}}}", CONTAINER_LABEL_CLUSTER))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

@@ -498,7 +498,7 @@ impl InstallArgs {
         }
 
         // Define all required manifests in deployment order using local files
-        let manifest_files = vec![
+        let manifest_files = [
             // 1. Common resources (namespace, RBAC, ServiceAccount)
             ("ns-and-sa.yaml", "namespace and ServiceAccount"),
             ("rbac.yaml", "RBAC resources"),
