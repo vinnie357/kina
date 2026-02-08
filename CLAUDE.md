@@ -18,8 +18,9 @@ See [AGENTS.md](AGENTS.md) for beads workflow, session completion rules, and `bd
 ## Project Structure
 - **kina-cli/src/**: Rust CLI source (cli/, core/, config/, errors/, utils/)
 - **kina-cli/tests/**: CLI and config tests
-- **kina-cli/manifests/**: Kubernetes manifests (nginx-ingress)
+- **kina-cli/manifests/**: Kubernetes manifests (nginx-ingress, demo-app)
 - **kina-cli/images/**: Custom node image Dockerfile and build scripts
+- **scripts/**: Extracted mise task scripts (Nushell `.nu` and Bash `.sh`)
 - **docs/research/**: Apple Container, KIND, CNI/Cilium research
 - **docs/planning/**: PRD and implementation plan
 - **docs/development/**: Testing patterns
@@ -36,6 +37,7 @@ See [AGENTS.md](AGENTS.md) for beads workflow, session completion rules, and `bd
 - **Beads-driven**: Use `bd ready` to find tasks, `bd update <id> --status in_progress` to claim
 - **Branch per task**: `git checkout main && git pull` then `git checkout -b type/description`
 - **Research-backed**: Reference docs/research/ for architecture decisions and constraints
+- **Discover tools with mise**: Run `mise tasks` to see all available development tasks. Task namespaces: `test:` (unit tests), `test:cluster:` (integration tests), `test:action:` (GitHub Actions), `kina:` (CLI), `image:` (node images), `k8s:` (Kubernetes tools), `bd:` (beads), `gitleaks:` (security scanning), `colima:` (Docker via colima)
 
 ### Anti-Fabrication Requirements
 All AI assistants working on this project MUST adhere to strict factual accuracy:

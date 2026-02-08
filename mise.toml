@@ -1,23 +1,21 @@
 [env]
-# Development environment variables for kina
 RUST_LOG = "info"
 RUST_BACKTRACE = "1"
 KINA_CONFIG_DIR = "$HOME/.config/kina"
 KINA_DATA_DIR = "$HOME/.local/share/kina"
 
 [tools]
-# Rust toolchain - use latest stable
 rust = "stable"
-
-# Kubernetes tools
 kubectx = "latest"
 kubens = "latest"
 cilium-cli = "latest"
-
-# CI/CD tools
 "ubi:nushell/nushell" = { version = "0.108.0", exe = "nu" }
 act = "0.2.82"
 "github:steveyegge/beads" = "0.49.0"
+
+# ============================================================================
+# BUILD & DEVELOPMENT
+# ============================================================================
 
 [tasks.build]
 description = "Build the kina CLI application"
@@ -29,20 +27,24 @@ description = "Build in development mode"
 run = "cargo build"
 dir = "kina-cli"
 
-[tasks.test]
-description = "Run all tests"
-run = "cargo test"
-dir = "kina-cli"
-
-[tasks.coverage]
-description = "Generate test coverage report"
-run = "cargo tarpaulin --out html --output-dir coverage"
-dir = "kina-cli"
-
 [tasks.check]
 description = "Check code without building"
 run = "cargo check"
 dir = "kina-cli"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "cargo clean"
+dir = "kina-cli"
+
+[tasks.install]
+description = "Install kina CLI locally"
+run = "cargo install --path ."
+dir = "kina-cli"
+
+[tasks."kina:install"]
+description = "Install kina CLI from project root"
+run = "cargo install --path kina-cli"
 
 [tasks.fmt]
 description = "Format code with rustfmt"
@@ -54,119 +56,6 @@ description = "Run clippy lints"
 run = "cargo clippy -- -D warnings"
 dir = "kina-cli"
 
-[tasks.audit]
-description = "Run security audit"
-run = "cargo audit"
-dir = "kina-cli"
-
-[tasks.install]
-description = "Install kina CLI locally"
-run = "cargo install --path ."
-dir = "kina-cli"
-
-[tasks.kina-install]
-description = "Install kina CLI from project root"
-run = "cargo install --path kina-cli"
-
-[tasks.clean]
-description = "Clean build artifacts"
-run = "cargo clean"
-dir = "kina-cli"
-
-[tasks.setup]
-description = "Set up development environment"
-run = [
-    "rustup component add rustfmt clippy",
-    "cargo install cargo-audit",
-    "cargo install cargo-tarpaulin",
-    "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
-]
-
-[tasks.pre-commit]
-description = "Run pre-commit checks (fmt, lint, test, audit)"
-run = """
-#!/usr/bin/env nu
-
-print "Running pre-commit checks..."
-
-let cli_steps = [
-    { name: "fmt check", cmd: "cargo fmt -- --check" }
-    { name: "clippy", cmd: "cargo clippy -- -D warnings" }
-    { name: "test", cmd: "cargo test" }
-]
-
-cd kina-cli
-
-for step in $cli_steps {
-    print $"  ($step.name)..."
-    let result = (do { nu -c $step.cmd } | complete)
-    if $result.exit_code != 0 {
-        print $"  FAIL ($step.name)"
-        print $result.stdout
-        print $result.stderr
-        exit $result.exit_code
-    }
-    print $"  OK ($step.name)"
-}
-
-# audit runs from repo root where Cargo.lock lives
-cd ..
-print "  audit..."
-let result = (do { nu -c "cargo audit" } | complete)
-if $result.exit_code != 0 {
-    print "  FAIL audit"
-    print $result.stdout
-    print $result.stderr
-    exit $result.exit_code
-}
-print "  OK audit"
-
-print "pre-commit passed"
-"""
-
-[tasks.local-ci]
-description = "Alias for pre-commit"
-depends = ["pre-commit"]
-
-[tasks.ci]
-description = "Run CI pipeline (fmt check, clippy, test)"
-run = """
-#!/usr/bin/env nu
-
-print "Running CI pipeline..."
-
-let steps = [
-    { name: "fmt check", cmd: "cargo fmt -- --check" }
-    { name: "clippy", cmd: "cargo clippy -- -D warnings" }
-    { name: "test", cmd: "cargo test" }
-    # { name: "build", cmd: "cargo build --release" }
-]
-
-cd kina-cli
-
-for step in $steps {
-    print $"  ($step.name)..."
-    let result = (do { nu -c $step.cmd } | complete)
-    if $result.exit_code != 0 {
-        print $"  FAIL ($step.name)"
-        print $result.stdout
-        print $result.stderr
-        exit $result.exit_code
-    }
-    print $"  OK ($step.name)"
-}
-
-print "CI passed"
-"""
-
-[tasks.release]
-description = "Build release binary"
-run = [
-    "mise run ci",
-    "cargo build --release",
-    "strip target/release/kina",
-]
-
 [tasks.docs]
 description = "Generate documentation"
 run = "cargo doc --open"
@@ -177,1209 +66,223 @@ description = "Watch files and rebuild on changes"
 run = "cargo watch -x check -x test"
 dir = "kina-cli"
 
+# ============================================================================
+# TESTING
+# ============================================================================
+
+[tasks.test]
+description = "Run all unit tests"
+run = "cargo test"
+dir = "kina-cli"
+
+[tasks."test:cli"]
+description = "Run basic CLI functionality tests"
+run = [
+    "cargo run --release -- --version",
+    "cargo run --release -- --help",
+    "cargo run --release -- create --help",
+    "cargo run --release -- config show --help",
+]
+dir = "kina-cli"
+
+[tasks.ci]
+description = "Run CI pipeline (fmt check, clippy, test)"
+run = "nu scripts/ci.nu"
+
+[tasks."pre-commit"]
+description = "Run pre-commit checks (fmt, lint, test, audit)"
+run = "nu scripts/pre-commit.nu"
+
+[tasks.coverage]
+description = "Generate test coverage report"
+run = "cargo tarpaulin --out html --output-dir coverage"
+dir = "kina-cli"
+
 [tasks.bench]
 description = "Run benchmarks"
 run = "cargo bench"
 dir = "kina-cli"
 
-# Container-related development tasks
+[tasks.audit]
+description = "Run security audit"
+run = "cargo audit"
+dir = "kina-cli"
 
-[tasks.container-check]
-description = "Check Apple Container availability"
-run = '''
-if command -v container >/dev/null 2>&1; then
-    echo "✅ Apple Container CLI found"
-    container --version 2>/dev/null || echo "Version check failed"
-else
-    echo "❌ Apple Container CLI not found"
-    echo "Note: Apple Container integration is still in development"
-fi
-'''
+# Integration tests
 
-[tasks.k8s-check]
-description = "Check Kubernetes tools availability"
-run = '''
-echo "Checking Kubernetes tools..."
-for tool in kubectl kubectx kubens k9s; do
-    if command -v $tool >/dev/null 2>&1; then
-        echo "✅ $tool found"
-        if [[ $tool == "kubectx" || $tool == "kubens" ]]; then
-            echo "   (managed by mise)"
-        fi
-    else
-        echo "❌ $tool not found"
-        if [[ $tool == "kubectx" || $tool == "kubens" ]]; then
-            echo "   Run 'mise install' to install"
-        fi
-    fi
-done
-'''
+[tasks."test:cluster"]
+description = "Create integration test cluster with ingress and demo app"
+run = "nu scripts/test-cluster.nu"
+timeout = "10m"
 
-[tasks.install-k8s-tools]
-description = "Install Kubernetes tools via mise"
-run = [
-    "echo 'Installing Kubernetes tools...'",
-    "mise install kubectx kubens",
-    "echo '✅ kubectx and kubens installed'",
-]
+[tasks."test:cluster:validate"]
+description = "Validate integration test cluster by testing the demo app"
+run = "nu scripts/test-cluster-validate.nu"
 
-[tasks.dev-setup]
-description = "Complete development environment setup"
-run = [
-    "mise run setup",
-    "mise run install-k8s-tools",
-    "mise run container-check",
-    "mise run k8s-check",
-    "echo '\n🎉 Development environment setup complete!'",
-    "echo 'Run `mise run dev` to build in development mode'",
-    "echo 'Run `mise run test` to run tests'",
-    "echo 'Run `mise run --list` to see all available tasks'",
-]
+[tasks."test:cluster:cleanup"]
+description = "Clean up integration test clusters (removes demo-* clusters)"
+run = "nu scripts/test-cluster-cleanup.nu"
 
-[tasks.help]
-description = "Show available development tasks"
-run = "mise run --list"
+# GitHub Actions local testing
 
-# CLI Testing Tasks
+[tasks."test:action"]
+description = "Test GitHub action locally using act (pull_request workflow)"
+run = "nu scripts/test-action.nu"
+
+[tasks."test:action:pr"]
+description = "Test GitHub action for pull_request workflow (with colima)"
+run = "nu scripts/test-action-pr.nu"
+
+[tasks."test:action:push"]
+description = "Test GitHub action for push to main workflow"
+run = "nu scripts/test-action-push.nu"
+
+# ============================================================================
+# KINA CLI
+# ============================================================================
 
 [tasks.kina]
 description = "Run the kina CLI (builds if needed)"
 run = 'cargo run --release -- "$@"'
 dir = "kina-cli"
-# Increase timeout for cluster creation operations (Cilium installation can take 3-5 minutes)
 timeout = "5m"
 
-[tasks.kina-dev]
+[tasks."kina:dev"]
 description = "Run the kina CLI in development mode (faster build)"
 run = 'cargo run -- "$@"'
 dir = "kina-cli"
 
-[tasks.test-cli]
-description = "Run basic CLI functionality tests"
-run = [
-    "echo '🧪 Testing CLI functionality...'",
-    "cargo run --release -- --version",
-    "cargo run --release -- --help",
-    "cargo run --release -- create --help",
-    "cargo run --release -- config show --help",
-    "echo '✅ Basic CLI tests completed'",
-]
-dir = "kina-cli"
-
-# Image Building Tasks
-
-[tasks.build-node-image]
-description = "Build custom Kubernetes node image for Apple Container VMs"
-run = '''
-echo "🏗️  Building Kina Kubernetes node image..."
-IMAGE_TAG="kina/node:v1.31.0"
-
-# Ensure we're in the images directory
-cd kina-cli/images
-
-# Build the image using Apple Container (NOT docker)
-echo "🔨 Building with Apple Container..."
-container build -t "$IMAGE_TAG" .
-
-# Verify the image was built successfully
-if container image list | grep -q "$IMAGE_TAG"; then
-    echo "✅ Successfully built image: $IMAGE_TAG"
-    echo "📋 Image available for kina clusters"
-else
-    echo "❌ Failed to build image"
-    exit 1
-fi
-
-echo ""
-echo "🎉 Build complete! Use with: mise run kina create my-cluster --image $IMAGE_TAG"
-'''
-
-[tasks.list-images]
-description = "List available container images"
-run = '''
-echo "📋 Available Apple Container images:"
-container image list
-'''
-
-[tasks.clean-images]
-description = "Clean up unused container images"
-run = '''
-echo "🧹 Cleaning up unused images..."
-echo "This will remove dangling images only (safe operation)"
-container image prune -f || echo "No images to clean"
-echo "✅ Image cleanup complete"
-'''
-
-[tasks.test-node-image]
-description = "Test the custom node image"
-run = '''
-IMAGE_TAG="kina/node:v1.31.0"
-echo "🧪 Testing node image: $IMAGE_TAG"
-
-# Check if image exists
-if ! container image list | grep -q "$IMAGE_TAG"; then
-    echo "❌ Image $IMAGE_TAG not found. Run 'mise run build-node-image' first."
-    exit 1
-fi
-
-echo "✅ Image exists"
-echo "🚀 Creating test container..."
-
-# Test basic container functionality
-TEST_CONTAINER="kina-node-test-$(date +%s)"
-container run --name "$TEST_CONTAINER" --rm -it "$IMAGE_TAG" /bin/bash -c "
-    echo '🔍 Testing container functionality...'
-    echo '📦 Checking systemd...'
-    systemctl --version
-    echo '🐳 Checking containerd...'
-    containerd --version
-    echo '☸️  Checking Kubernetes tools...'
-    kubeadm version --output=short
-    kubelet --version
-    kubectl version --client=true --output=yaml
-    echo '✅ All checks passed!'
-" || {
-    echo "❌ Container test failed"
-    exit 1
-}
-
-echo "✅ Node image test completed successfully"
-'''
-
-[tasks.build-and-test-image]
-description = "Build and test the node image"
-run = [
-    "mise run build-node-image",
-    "mise run test-node-image",
-]
-
-# Demo and Testing Tasks
-
-[tasks.demo-cluster]
-description = "🚀 Create a complete demo cluster with ingress and test app"
-run = '''
-set -euo pipefail
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-# Helper functions
-log() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    exit 1
-}
-
-banner() {
-    echo -e "${PURPLE}========================================${NC}"
-    echo -e "${PURPLE}🎉 $1${NC}"
-    echo -e "${PURPLE}========================================${NC}"
-}
-
-# Generate random cluster name
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-CLUSTER_NAME="demo-${TIMESTAMP}"
-
-banner "KINA DEMO CLUSTER SETUP"
-echo -e "${CYAN}Cluster Name:${NC} $CLUSTER_NAME"
-echo ""
-
-# Ensure we're in the project root (should be by default now)
-if [[ ! -f "Cargo.toml" ]]; then
-    error "Not in kina project root directory"
-fi
-
-# Step 1: Build kina if needed
-log "Step 1: Building kina CLI..."
-if ! cargo build --release --quiet --manifest-path kina-cli/Cargo.toml; then
-    error "Failed to build kina CLI"
-fi
-log "✅ Kina CLI built successfully"
-
-# Step 2: Create cluster
-log "Step 2: Creating cluster '$CLUSTER_NAME'..."
-if ! cargo run --release --manifest-path kina-cli/Cargo.toml -- create "$CLUSTER_NAME" --wait 60; then
-    error "Failed to create cluster"
-fi
-log "✅ Cluster '$CLUSTER_NAME' created"
-
-# Step 3: Install nginx-ingress
-log "Step 3: Installing nginx-ingress controller..."
-if ! cargo run --release --manifest-path kina-cli/Cargo.toml -- install nginx-ingress --cluster "$CLUSTER_NAME"; then
-    error "Failed to install nginx-ingress"
-fi
-log "✅ nginx-ingress installed"
-
-# Step 4: Wait for nginx-ingress to be ready
-log "Step 4: Waiting for nginx-ingress to be ready..."
-KUBECONFIG_PATH="$HOME/.kube/$CLUSTER_NAME"
-
-# Use kubectl wait for more reliable waiting (up to 3 minutes for image pull)
-if ! kubectl --kubeconfig="$KUBECONFIG_PATH" wait --for=condition=Ready pods -n nginx-ingress --all --timeout=180s; then
-    error "nginx-ingress did not become ready in time"
-fi
-log "✅ nginx-ingress is ready"
-
-# Step 5: Deploy demo application
-log "Step 5: Deploying demo application..."
-
-# Create demo app manifest
-cat > /tmp/kina-demo-app.yaml << 'EOF'
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kina-demo-app
-  namespace: default
-  labels:
-    app: kina-demo-app
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: kina-demo-app
-  template:
-    metadata:
-      labels:
-        app: kina-demo-app
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
-        volumeMounts:
-        - name: demo-content
-          mountPath: /usr/share/nginx/html
-      volumes:
-      - name: demo-content
-        configMap:
-          name: kina-demo-content
-
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kina-demo-content
-  namespace: default
-data:
-  index.html: |
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Kina Demo Success!</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            .container {
-                background: white;
-                padding: 40px;
-                border-radius: 20px;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                text-align: center;
-                max-width: 600px;
-                margin: 20px;
-            }
-            .header {
-                color: #2c3e50;
-                margin-bottom: 30px;
-                font-size: 2.5rem;
-                font-weight: 300;
-            }
-            .success-badge {
-                display: inline-block;
-                background: #2ecc71;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 20px;
-                font-size: 0.9rem;
-                margin-bottom: 20px;
-                font-weight: 500;
-            }
-            .info-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin: 30px 0;
-            }
-            .info-card {
-                background: #f8f9fa;
-                padding: 20px;
-                border-radius: 10px;
-                border-left: 4px solid #3498db;
-            }
-            .info-label {
-                font-weight: 600;
-                color: #34495e;
-                margin-bottom: 5px;
-                text-transform: uppercase;
-                font-size: 0.8rem;
-                letter-spacing: 1px;
-            }
-            .info-value {
-                font-size: 1.1rem;
-                color: #2c3e50;
-                font-family: 'Monaco', 'Menlo', monospace;
-            }
-            .features {
-                text-align: left;
-                margin: 30px 0;
-            }
-            .feature {
-                display: flex;
-                align-items: center;
-                margin: 10px 0;
-                padding: 10px;
-                background: #ecf0f1;
-                border-radius: 8px;
-            }
-            .feature-icon {
-                margin-right: 15px;
-                font-size: 1.2rem;
-            }
-            .footer {
-                margin-top: 30px;
-                padding-top: 20px;
-                border-top: 1px solid #ecf0f1;
-                color: #7f8c8d;
-                font-size: 0.9rem;
-            }
-            .cluster-info {
-                background: #e8f5e8;
-                border: 1px solid #2ecc71;
-                border-radius: 8px;
-                padding: 15px;
-                margin: 20px 0;
-            }
-            @media (max-width: 600px) {
-                .info-grid { grid-template-columns: 1fr; }
-                .container { padding: 20px; margin: 10px; }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="success-badge">&#x2705; DEPLOYMENT SUCCESSFUL</div>
-            <h1 class="header">&#x1F389; Kina Demo Cluster</h1>
-
-            <div class="cluster-info">
-                <div class="info-label">Cluster Name</div>
-                <div class="info-value">${CLUSTER_NAME}</div>
-            </div>
-
-            <div class="info-grid">
-                <div class="info-card">
-                    <div class="info-label">Platform</div>
-                    <div class="info-value">Apple Container</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-label">Ingress</div>
-                    <div class="info-value">nginx-ingress</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-label">Replicas</div>
-                    <div class="info-value">2 pods</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-label">Domain</div>
-                    <div class="info-value">${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}</div>
-                </div>
-            </div>
-
-            <div class="features">
-                <div class="feature">
-                    <span class="feature-icon">&#x1F3D7;&#xFE0F;</span>
-                    <span>Kubernetes cluster running on Apple Container</span>
-                </div>
-                <div class="feature">
-                    <span class="feature-icon">&#x1F310;</span>
-                    <span>NGINX Ingress Controller (nginx.org) installed</span>
-                </div>
-                <div class="feature">
-                    <span class="feature-icon">&#x1F4E6;</span>
-                    <span>Demo application with 2 replicas deployed</span>
-                </div>
-                <div class="feature">
-                    <span class="feature-icon">&#x1F517;</span>
-                    <span>Ingress routing configured and working</span>
-                </div>
-            </div>
-
-            <div class="footer">
-                <strong>&#x1F680; Ready for development!</strong><br>
-                Your Kina cluster is fully configured and ready to use.
-                <br><br>
-                <em>Generated by: mise run demo-cluster</em>
-            </div>
-        </div>
-    </body>
-    </html>
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kina-demo-service
-  namespace: default
-  labels:
-    app: kina-demo-app
-spec:
-  selector:
-    app: kina-demo-app
-  ports:
-  - name: http
-    port: 80
-    targetPort: 80
-  type: ClusterIP
-
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: kina-demo-ingress
-  namespace: default
-  annotations:
-    nginx.org/ssl-redirect: "false"
-    nginx.org/server-tokens: "false"
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: kina-demo-service
-            port:
-              number: 80
-EOF
-
-# Get DNS domain for hostname substitution
-export DNS_DOMAIN=$(container system dns list | head -1 || echo "")
-if [[ -z "$DNS_DOMAIN" ]]; then
-    # If no DNS domain, use a fallback like demo.local
-    export DNS_DOMAIN="demo.local"
-    warn "No DNS domain configured, using fallback: $DNS_DOMAIN"
-fi
-
-# Export cluster name for envsubst
-export CLUSTER_NAME
-
-# Apply the demo app using envsubst for variable substitution
-if ! envsubst < /tmp/kina-demo-app.yaml | kubectl --kubeconfig="$KUBECONFIG_PATH" apply -f -; then
-    error "Failed to deploy demo application"
-fi
-
-# Wait for pods to be ready
-log "Waiting for demo app to be ready..."
-if ! kubectl --kubeconfig="$KUBECONFIG_PATH" wait --for=condition=Ready pods -l app=kina-demo-app --timeout=60s; then
-    error "Demo app did not become ready in time"
-fi
-
-log "✅ Demo application deployed and ready"
-
-# Step 6: Get cluster information and DNS domain
-log "Step 6: Getting cluster information..."
-CLUSTER_IP=$(cargo run --release --manifest-path kina-cli/Cargo.toml -- status "$CLUSTER_NAME" --output json 2>/dev/null | jq -r '.nodes[0].ip_address // empty')
-
-if [[ -z "$CLUSTER_IP" ]]; then
-    error "Could not determine cluster IP address"
-fi
-
-# Get the DNS domain from Apple Container
-DNS_DOMAIN=$(container system dns list | head -1 || echo "")
-if [[ -z "$DNS_DOMAIN" ]]; then
-    warn "No DNS domain configured in Apple Container, using IP address for access"
-    CLUSTER_HOST="$CLUSTER_IP"
-else
-    CLUSTER_HOST="${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}"
-    log "✅ DNS domain: $DNS_DOMAIN"
-    log "✅ Cluster hostname: $CLUSTER_HOST"
-fi
-
-log "✅ Cluster IP: $CLUSTER_IP"
-
-# Step 7: Test the demo application
-log "Step 7: Testing demo application..."
-if [[ -n "$DNS_DOMAIN" ]]; then
-    TEST_HOST="${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}"
-    log "Testing with hostname: $TEST_HOST"
-
-    # Test the demo app through ingress
-    if curl -s -H "Host: $TEST_HOST" "http://$CLUSTER_IP" | grep -q "🎉 Kina Demo"; then
-        log "✅ Demo application is accessible and working!"
-    else
-        warn "Demo application test failed, but cluster is ready for manual testing"
-    fi
-else
-    log "⚠️  No DNS domain configured, skipping automated test"
-fi
-
-# Clean up temp file
-rm -f /tmp/kina-demo-app.yaml
-
-# Success! Show instructions
-banner "🎉 DEMO CLUSTER READY!"
-echo ""
-echo -e "${GREEN}✅ Cluster Information:${NC}"
-echo -e "   Name: ${CYAN}$CLUSTER_NAME${NC}"
-echo -e "   IP: ${CYAN}$CLUSTER_IP${NC}"
-echo -e "   Kubeconfig: ${CYAN}~/.kube/$CLUSTER_NAME${NC}"
-echo ""
-echo -e "${GREEN}🌐 Access Your Demo App:${NC}"
-echo ""
-echo -e "${YELLOW}Option 1 - Direct curl test:${NC}"
-echo -e "   curl -H \"Host: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}\" http://$CLUSTER_IP"
-echo ""
-echo -e "${YELLOW}Option 2 - Browser Access:${NC}"
-echo -e "   Add to /etc/hosts: ${CYAN}$CLUSTER_IP ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}${NC}"
-echo -e "   Then visit: ${CYAN}http://${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}${NC}"
-echo ""
-echo -e "${YELLOW}Option 3 - Test from cluster pod:${NC}"
-echo -e "   kubectl --kubeconfig ~/.kube/$CLUSTER_NAME run test-pod --image=nginx:alpine --rm -it -- \\"
-echo -e "     curl -H \"Host: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}\" http://$CLUSTER_IP"
-echo ""
-echo -e "${GREEN}🔧 Useful Commands:${NC}"
-echo -e "   Check status: ${CYAN}cargo run --release -- status $CLUSTER_NAME${NC}"
-echo -e "   View pods: ${CYAN}kubectl --kubeconfig ~/.kube/$CLUSTER_NAME get pods -A${NC}"
-echo -e "   View ingress: ${CYAN}kubectl --kubeconfig ~/.kube/$CLUSTER_NAME get ingress${NC}"
-echo -e "   Delete cluster: ${CYAN}cargo run --release -- delete $CLUSTER_NAME${NC}"
-echo ""
-echo -e "${PURPLE}🎊 Enjoy your Kina demo cluster!${NC}"
-'''
-timeout = "10m"
-
-[tasks.demo-cleanup]
-description = "🧹 Clean up demo clusters (removes clusters with 'demo-' prefix)"
-run = '''
-set -euo pipefail
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-log() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log "🧹 Finding demo clusters to clean up..."
-
-# Get list of demo clusters using kina list
-DEMO_CLUSTERS=$(cargo run --release --manifest-path kina-cli/Cargo.toml -- list 2>/dev/null | grep "^demo-" || true)
-
-if [ -z "$DEMO_CLUSTERS" ]; then
-    log "No demo clusters found to clean up"
-    # Also check for any demo kubeconfig files
-    DEMO_CONFIGS=$(find ~/.kube -name "demo-*" 2>/dev/null || true)
-    if [ -n "$DEMO_CONFIGS" ]; then
-        log "Cleaning up orphaned kubeconfig files..."
-        echo "$DEMO_CONFIGS" | xargs rm -f
-        log "✅ Cleaned up kubeconfig files"
-    fi
-    exit 0
-fi
-
-echo ""
-echo -e "${YELLOW}Found demo clusters:${NC}"
-echo "$DEMO_CLUSTERS"
-echo ""
-
-# Auto-confirm deletion for mise automation (can be overridden with DEMO_CLEANUP_CONFIRM=false)
-if [[ "${DEMO_CLEANUP_CONFIRM:-true}" == "true" ]]; then
-    echo "$DEMO_CLUSTERS" | while read -r cluster_name; do
-        if [ -n "$cluster_name" ]; then
-            log "Deleting cluster: $cluster_name"
-
-            # Use kina delete for proper cleanup
-            if cargo run --release --manifest-path kina-cli/Cargo.toml -- delete "$cluster_name" 2>/dev/null; then
-                log "✅ Deleted cluster $cluster_name"
-            else
-                warn "Failed to delete $cluster_name, trying manual cleanup..."
-
-                # Fallback: manual container cleanup
-                if container stop "${cluster_name}-control-plane" 2>/dev/null; then
-                    log "✅ Stopped ${cluster_name}-control-plane"
-                fi
-                if container delete "${cluster_name}-control-plane" 2>/dev/null; then
-                    log "✅ Removed ${cluster_name}-control-plane"
-                fi
-            fi
-
-            # Remove kubeconfig file (in case kina delete missed it)
-            if [ -f "$HOME/.kube/$cluster_name" ]; then
-                rm -f "$HOME/.kube/$cluster_name"
-                log "✅ Removed kubeconfig for $cluster_name"
-            fi
-        fi
-    done
-    log "✅ Demo cleanup completed"
-else
-    log "Cleanup cancelled"
-fi
-'''
-dir = "kina-cli"
-
 [tasks."kina:use"]
-description = "🔑 Set kubectl context to a kina cluster (auto-selects if only one running)"
+description = "Set kubectl context to a kina cluster (auto-selects if only one running)"
 usage = 'arg "[cluster]"'
-run = '''
-set -euo pipefail
-
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-log() { echo -e "${GREEN}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-
-CLUSTER_NAME="${usage_cluster:-}"
-
-if [ -z "$CLUSTER_NAME" ]; then
-    # Auto-detect: list running clusters (filter out status messages)
-    CLUSTERS=$(cargo run --release --quiet --manifest-path kina-cli/Cargo.toml -- --quiet list 2>/dev/null | grep -v "^No clusters" || true)
-
-    if [ -z "$CLUSTERS" ]; then
-        error "No kina clusters found. Create one with: mise run demo-cluster"
-    fi
-
-    CLUSTER_COUNT=$(echo "$CLUSTERS" | wc -l | tr -d ' ')
-
-    if [ "$CLUSTER_COUNT" -eq 1 ]; then
-        CLUSTER_NAME=$(echo "$CLUSTERS" | head -1)
-        log "Auto-selected cluster: ${CYAN}${CLUSTER_NAME}${NC}"
-    else
-        echo -e "${YELLOW}Multiple clusters found:${NC}"
-        echo "$CLUSTERS" | while read -r c; do echo "  - $c"; done
-        error "Specify a cluster name: mise run kina:use <cluster-name>"
-    fi
-fi
-
-# Verify cluster exists
-KUBECONFIG_PATH="$HOME/.kube/$CLUSTER_NAME"
-if [ ! -f "$KUBECONFIG_PATH" ]; then
-    error "Kubeconfig not found: $KUBECONFIG_PATH — is cluster '$CLUSTER_NAME' running?"
-fi
-
-# Set kubectl context
-if ! kubectl config use-context "$CLUSTER_NAME" >/dev/null 2>&1; then
-    warn "Context '$CLUSTER_NAME' not in merged config, using individual kubeconfig"
-    export KUBECONFIG="$KUBECONFIG_PATH"
-fi
-
-# Get cluster IP via kina status
-CLUSTER_IP=$(cargo run --release --quiet --manifest-path kina-cli/Cargo.toml -- --quiet status "$CLUSTER_NAME" --output json 2>/dev/null | jq -r '.nodes[0].ip_address // empty')
-
-# Show confirmation
-echo ""
-echo -e "${GREEN}✅ kubectl configured for cluster: ${CYAN}${CLUSTER_NAME}${NC}"
-echo -e "   Context:    ${CYAN}$(kubectl config current-context 2>/dev/null)${NC}"
-echo -e "   Kubeconfig: ${CYAN}${KUBECONFIG_PATH}${NC}"
-if [ -n "$CLUSTER_IP" ]; then
-    echo -e "   Cluster IP: ${CYAN}${CLUSTER_IP}${NC}"
-fi
-echo ""
-echo -e "${GREEN}Try:${NC} kubectl get nodes"
-'''
-
-[tasks.demo-test]
-description = "🧪 Test a demo cluster by creating and accessing the test app"
-run = '''
-set -euo pipefail
-
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    exit 1
-}
-
-# Find the most recent demo cluster
-LATEST_DEMO=$(cargo run --release -- list 2>/dev/null | grep "^demo-" | tail -1)
-
-if [ -z "$LATEST_DEMO" ]; then
-    error "No demo clusters found. Run 'mise run demo-cluster' first."
-fi
-
-log "Testing demo cluster: $LATEST_DEMO"
-
-# Get cluster IP using kina status
-CLUSTER_IP=$(cargo run --release -- status "$LATEST_DEMO" --output json 2>/dev/null | jq -r '.nodes[0].ip_address // empty')
-
-if [ -z "$CLUSTER_IP" ]; then
-    error "Could not find IP for cluster $LATEST_DEMO"
-fi
-
-# Get DNS domain
-DNS_DOMAIN=$(container system dns list | head -1 || echo "")
-if [ -z "$DNS_DOMAIN" ]; then
-    error "Could not detect DNS domain from Apple Container"
-fi
-
-log "Cluster IP: $CLUSTER_IP"
-log "DNS Domain: $DNS_DOMAIN"
-
-# Test the ingress
-log "Testing ingress routing..."
-KUBECONFIG_PATH="$HOME/.kube/$LATEST_DEMO"
-HOSTNAME="${LATEST_DEMO}-control-plane.${DNS_DOMAIN}"
-
-log "Testing with hostname: $HOSTNAME"
-
-# Create a temporary test pod and test the ingress
-if kubectl --kubeconfig="$KUBECONFIG_PATH" run test-curl --image=nginx:alpine --rm -i --restart=Never -- \
-   curl -s -H "Host: $HOSTNAME" "http://$CLUSTER_IP" | grep -q "Kina Demo Success"; then
-    log "✅ Ingress test passed! Demo cluster is working correctly."
-    log "🎉 Demo app is accessible at $HOSTNAME"
-else
-    error "❌ Ingress test failed. Check cluster status."
-fi
-'''
-dir = "kina-cli"
+run = "nu scripts/kina-use.nu"
 
 # ============================================================================
-# CI/CD TESTING TASKS
+# CONTAINER & IMAGE MANAGEMENT
 # ============================================================================
 
-[tasks."colima:start"]
-description = "Start colima with Docker runtime (macOS only)"
+[tasks."container:check"]
+description = "Check Apple Container availability"
 run = """
 #!/usr/bin/env nu
-
-# Only run on macOS
-if $nu.os-info.name != "macos" {
-    print "Colima is only available on macOS. Ubuntu/Linux has native Docker."
-    exit 0
-}
-
-# Use mise exec to run colima with temporary tool activation
-print "Checking colima status..."
-let status = (mise exec lima@latest colima@latest -- colima status --profile default | complete)
-if $status.exit_code != 0 {
-    print "Starting colima..."
-    mise exec lima@latest colima@latest -- colima start --vm-type vz --vz-rosetta --runtime docker
+if (which container | is-not-empty) {
+    print "Apple Container CLI found"
+    let v = (do { ^container --version } | complete)
+    if $v.exit_code == 0 { print ($v.stdout | str trim) } else { print "Version check failed" }
 } else {
-    print "Colima is already running"
+    print "Apple Container CLI not found"
 }
 """
 
-[tasks."colima:stop"]
-description = "Stop colima"
-run = """
-#!/usr/bin/env nu
+[tasks."image:build"]
+description = "Build custom Kubernetes node image"
+run = "nu scripts/image-build.nu"
 
-# Only run on macOS
-if $nu.os-info.name != "macos" {
-    print "Colima is only available on macOS."
-    exit 0
-}
+[tasks."image:list"]
+description = "List available container images"
+run = "container image list"
 
-mise exec lima@latest colima@latest -- colima stop
-"""
+[tasks."image:test"]
+description = "Test the custom node image"
+run = "nu scripts/image-test.nu"
 
-[tasks."test:action"]
-description = "Test GitHub action locally using act (tests pull_request workflow)"
-run = """
-#!/usr/bin/env nu
+[tasks."image:validate"]
+description = "Build and test the node image"
+depends = ["image:build", "image:test"]
 
-# Detect OS and set flags for Mac
-let act_flags = if $nu.os-info.name == "macos" {
-    [
-        "--container-architecture" "linux/amd64"
-        "--container-daemon-socket" "-"
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-} else {
-    [
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-}
-
-act pull_request ...$act_flags
-"""
-
-[tasks."test:action:pr"]
-description = "Test GitHub action for pull_request workflow"
-run = """
-#!/usr/bin/env nu
-
-let colima_socket = $"($env.HOME)/.colima/docker.sock"
-let use_colima = ($colima_socket | path exists)
-
-# Set DOCKER_HOST for colima
-if $use_colima {
-    $env.DOCKER_HOST = $"unix://($colima_socket)"
-}
-
-let act_flags = if $nu.os-info.name == "macos" {
-    [
-        "--container-architecture" "linux/amd64"
-        "--container-daemon-socket" "-"
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-} else {
-    [
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-}
-
-act pull_request ...$act_flags
-"""
-
-[tasks."test:action:push"]
-description = "Test GitHub action for push to main workflow"
-run = """
-#!/usr/bin/env nu
-
-let colima_socket = $"($env.HOME)/.colima/docker.sock"
-let use_colima = ($colima_socket | path exists)
-
-# Set DOCKER_HOST for colima
-if $use_colima {
-    $env.DOCKER_HOST = $"unix://($colima_socket)"
-}
-
-let act_flags = if $nu.os-info.name == "macos" {
-    [
-        "--container-architecture" "linux/amd64"
-        "--container-daemon-socket" "-"
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-} else {
-    [
-        "-P" "ubuntu-latest=catthehacker/ubuntu:act-latest"
-    ]
-}
-
-act push ...$act_flags
-"""
+[tasks."image:clean"]
+description = "Clean up unused container images"
+run = "nu -c 'let r = (do { ^container image prune -f } | complete); if $r.exit_code != 0 { print \"No images to clean\" } else { print $r.stdout }'"
 
 # ============================================================================
-# SECURITY TASKS
+# KUBERNETES TOOLS
+# ============================================================================
+
+[tasks."k8s:check"]
+description = "Check Kubernetes tools availability"
+run = "nu scripts/k8s-check.nu"
+
+[tasks."k8s:install"]
+description = "Install Kubernetes tools via mise"
+run = "mise install kubectx kubens"
+
+# ============================================================================
+# SETUP
+# ============================================================================
+
+[tasks.setup]
+description = "Set up development environment"
+run = [
+    "rustup component add rustfmt clippy",
+    "cargo install cargo-audit",
+    "cargo install cargo-tarpaulin",
+    "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
+]
+
+[tasks."setup:dev"]
+description = "Complete development environment setup"
+depends = ["setup", "k8s:install"]
+run = [
+    "mise run container:check",
+    "mise run k8s:check",
+]
+
+[tasks.release]
+description = "Build release binary"
+run = [
+    "mise run ci",
+    "cargo build --release",
+    "strip target/release/kina",
+]
+
+# ============================================================================
+# SECURITY
 # ============================================================================
 
 [tasks.gitleaks]
 description = "Run gitleaks secret scanner (Apple Container runtime)"
-run = """
-#!/usr/bin/env nu
-
-let repo_root = (git rev-parse --show-toplevel | str trim)
-let image = "zricethezav/gitleaks"
-
-# Build gitleaks arguments
-mut args = ["detect" "--source=/code" "-v"]
-
-# Auto-detect baseline file
-let baseline_path = ($repo_root | path join ".gitleaks-baseline.json")
-if ($baseline_path | path exists) {
-    let baseline_name = ($baseline_path | path basename)
-    $args = ($args | append $"--baseline-path=/code/($baseline_name)")
-    print $"Using baseline: ($baseline_name)"
-}
-
-# Ensure Apple Container is running
-if (which container | is-empty) {
-    print "Apple Container CLI not found. Use mise run gitleaks:docker or mise run gitleaks:colima"
-    exit 1
-}
-
-let status = (do { ^container system status } | complete)
-if $status.exit_code != 0 {
-    print "Starting Apple Container..."
-    do { ^container system start } | complete
-}
-
-let final_args = $args
-print $"Scanning: ($repo_root)"
-let result = (do { ^container run --rm -v $"($repo_root):/code" $image ...$final_args } | complete)
-print $result.stdout
-
-if $result.exit_code == 0 {
-    print "No secrets detected"
-} else if $result.exit_code == 1 {
-    print "Secrets detected!"
-    print $result.stderr
-} else {
-    print $"Error: ($result.stderr)"
-}
-
-exit $result.exit_code
-"""
+run = "nu scripts/gitleaks.nu"
 
 [tasks."gitleaks:docker"]
 description = "Run gitleaks secret scanner (Docker runtime)"
-run = """
-#!/usr/bin/env nu
-
-let repo_root = (git rev-parse --show-toplevel | str trim)
-let image = "zricethezav/gitleaks"
-
-mut args = ["detect" "--source=/code" "-v"]
-
-let baseline_path = ($repo_root | path join ".gitleaks-baseline.json")
-if ($baseline_path | path exists) {
-    let baseline_name = ($baseline_path | path basename)
-    $args = ($args | append $"--baseline-path=/code/($baseline_name)")
-    print $"Using baseline: ($baseline_name)"
-}
-
-if (which docker | is-empty) {
-    print "Docker CLI not found"
-    exit 1
-}
-
-let status = (do { ^docker info } | complete)
-if $status.exit_code != 0 {
-    print "Starting Docker..."
-    if $nu.os-info.name == "macos" {
-        do { ^open -a Docker } | complete
-        print "Waiting for Docker to start..."
-        mut attempts = 0
-        loop {
-            sleep 2sec
-            $attempts = $attempts + 1
-            let check = (do { ^docker info } | complete)
-            if $check.exit_code == 0 { break }
-            if $attempts >= 30 {
-                print "Docker failed to start"
-                exit 1
-            }
-        }
-    } else {
-        print "Docker is not running. Start it manually."
-        exit 1
-    }
-}
-
-let final_args = $args
-print $"Scanning: ($repo_root)"
-let result = (do { ^docker run --rm -v $"($repo_root):/code" $image ...$final_args } | complete)
-print $result.stdout
-
-if $result.exit_code == 0 {
-    print "No secrets detected"
-} else if $result.exit_code == 1 {
-    print "Secrets detected!"
-    print $result.stderr
-} else {
-    print $"Error: ($result.stderr)"
-}
-
-exit $result.exit_code
-"""
+run = "nu scripts/gitleaks-docker.nu"
 
 [tasks."gitleaks:colima"]
 description = "Run gitleaks secret scanner (Colima runtime)"
-run = """
-#!/usr/bin/env nu
-
-if $nu.os-info.name != "macos" {
-    print "Colima is only available on macOS"
-    exit 1
-}
-
-let repo_root = (git rev-parse --show-toplevel | str trim)
-let image = "zricethezav/gitleaks"
-
-mut args = ["detect" "--source=/code" "-v"]
-
-let baseline_path = ($repo_root | path join ".gitleaks-baseline.json")
-if ($baseline_path | path exists) {
-    let baseline_name = ($baseline_path | path basename)
-    $args = ($args | append $"--baseline-path=/code/($baseline_name)")
-    print $"Using baseline: ($baseline_name)"
-}
-
-let status = (do { ^mise exec lima@latest colima@latest -- colima status } | complete)
-if $status.exit_code != 0 {
-    print "Starting Colima..."
-    do { ^mise exec lima@latest colima@latest -- colima start } | complete
-}
-
-let final_args = $args
-print $"Scanning: ($repo_root)"
-let result = (do { ^mise exec lima@latest colima@latest -- docker run --rm -v $"($repo_root):/code" $image ...$final_args } | complete)
-print $result.stdout
-
-if $result.exit_code == 0 {
-    print "No secrets detected"
-} else if $result.exit_code == 1 {
-    print "Secrets detected!"
-    print $result.stderr
-} else {
-    print $"Error: ($result.stderr)"
-}
-
-exit $result.exit_code
-"""
+run = "nu scripts/gitleaks-colima.nu"
 
 [tasks."gitleaks:stop"]
 description = "Stop all container runtimes"
-run = """
-#!/usr/bin/env nu
-
-print "Stopping container runtimes..."
-
-# Stop Apple Container
-if (which container | is-not-empty) {
-    let status = (do { ^container system status } | complete)
-    if $status.exit_code == 0 {
-        print "  Stopping Apple Container..."
-        do { ^container system stop } | complete
-        print "  Apple Container stopped"
-    }
-}
-
-# Stop Docker
-if (which docker | is-not-empty) {
-    let status = (do { ^docker info } | complete)
-    if $status.exit_code == 0 {
-        print "  Stopping Docker..."
-        if $nu.os-info.name == "macos" {
-            do { ^osascript -e 'quit app "Docker"' } | complete
-            print "  Docker stopped"
-        } else {
-            print "  On Linux, stop Docker manually: sudo systemctl stop docker"
-        }
-    }
-}
-
-# Stop Colima
-if $nu.os-info.name == "macos" and (which mise | is-not-empty) {
-    let status = (do { ^mise exec lima@latest colima@latest -- colima status } | complete)
-    if $status.exit_code == 0 {
-        print "  Stopping Colima..."
-        do { ^mise exec lima@latest colima@latest -- colima stop } | complete
-        print "  Colima stopped"
-    }
-}
-
-print "Done"
-"""
-
-[tasks."gitleaks:stop:container"]
-description = "Stop Apple Container runtime"
-run = """
-#!/usr/bin/env nu
-
-if (which container | is-empty) {
-    print "Apple Container CLI not found"
-    exit 0
-}
-
-let status = (do { ^container system status } | complete)
-if $status.exit_code != 0 {
-    print "Apple Container is not running"
-    exit 0
-}
-
-print "Stopping Apple Container..."
-do { ^container system stop } | complete
-print "Apple Container stopped"
-"""
-
-[tasks."gitleaks:stop:docker"]
-description = "Stop Docker runtime"
-run = """
-#!/usr/bin/env nu
-
-if (which docker | is-empty) {
-    print "Docker CLI not found"
-    exit 0
-}
-
-let status = (do { ^docker info } | complete)
-if $status.exit_code != 0 {
-    print "Docker is not running"
-    exit 0
-}
-
-print "Stopping Docker..."
-if $nu.os-info.name == "macos" {
-    do { ^osascript -e 'quit app "Docker"' } | complete
-    print "Docker stopped"
-} else {
-    print "On Linux, stop Docker manually: sudo systemctl stop docker"
-}
-"""
-
-[tasks."gitleaks:stop:colima"]
-description = "Stop Colima runtime"
-run = """
-#!/usr/bin/env nu
-
-if $nu.os-info.name != "macos" {
-    print "Colima is only available on macOS"
-    exit 0
-}
-
-let status = (do { ^mise exec lima@latest colima@latest -- colima status } | complete)
-if $status.exit_code != 0 {
-    print "Colima is not running"
-    exit 0
-}
-
-print "Stopping Colima..."
-do { ^mise exec lima@latest colima@latest -- colima stop } | complete
-print "Colima stopped"
-"""
+run = "nu scripts/gitleaks-stop.nu"
 
 # ============================================================================
-# BEADS ISSUE TRACKING TASKS
+# CI/CD TOOLS
 # ============================================================================
 
-[tasks.bd-ready]
+[tasks."colima:start"]
+description = "Start colima with Docker runtime (macOS only)"
+run = "nu scripts/colima-start.nu"
+
+[tasks."colima:stop"]
+description = "Stop colima"
+run = "nu scripts/colima-stop.nu"
+
+# ============================================================================
+# BEADS ISSUE TRACKING
+# ============================================================================
+
+[tasks."bd:ready"]
 description = "Show beads tasks ready to work on (no blockers)"
 run = "bd ready"
 
-[tasks.bd-list]
+[tasks."bd:list"]
 description = "List all open beads tasks"
 run = "bd list"
 
-[tasks.bd-sync]
+[tasks."bd:sync"]
 description = "Sync beads with git remote"
 run = "bd sync"
 
-[tasks.bd-doctor]
+[tasks."bd:doctor"]
 description = "Check beads health and configuration"
 run = "bd doctor"
