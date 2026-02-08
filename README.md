@@ -2,13 +2,14 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/vinnie357/kina)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![Apple Container](https://img.shields.io/badge/Apple%20Container-0.5.0%2B-blue.svg)](https://github.com/apple/container)
 
 **kina** is a Rust CLI tool for running local Kubernetes clusters using Apple Container technology. It provides similar functionality to [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) but is optimized for macOS systems, leveraging native Apple Container technology for improved performance and integration.
 
 ## 🚀 Quick Start Summary
 
 1. **Install Apple Container** from [GitHub releases](https://github.com/apple/container/releases) and run `container system start`
-2. **Install kina** with `cargo install --path kina-cli` or `mise run kina-install` (requires cloning this repo)
+2. **Install kina** with `cargo install --path kina-cli` or `mise run kina:install` (requires cloning this repo)
 3. **Create cluster** with `kina create my-cluster`
 4. **Export kubeconfig** with `kina export my-cluster --format kubeconfig --output ~/.kube/my-cluster`
 5. **Use kubectl** with `export KUBECONFIG=~/.kube/my-cluster && kubectl get nodes`
@@ -28,7 +29,6 @@
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
-- [Project Source Prompt](#project-source-prompt)
 
 ## Features
 
@@ -43,8 +43,8 @@
 ## Requirements
 
 ### System Requirements
-- **macOS**: 15.6 or later (macOS 26 recommended for full features)
-- **Apple Container**: Apple Container CLI (installation instructions below)
+- **macOS**: 26+ (macOS 15.6 may work with limitations)
+- **Apple Container**: 0.5.0+ (auto-detected and validated at startup)
 - **Rust**: 1.70+ (for building from source)
 
 ### Apple Container Installation
@@ -55,7 +55,7 @@ Apple Container is **required** for kina to work. Install it first:
 3. **Start Service**: Run `container system start` to start the API server
 4. **Verify**: Check installation with `container --version`
 
-**Note**: Apple Container is optimized for macOS 26+ but works on macOS 15.6+ with some limitations.
+**Note**: kina requires Apple Container **0.5.0 or later**. The version is automatically detected and validated when kina starts. Run `kina` (no arguments) to see your kina and Apple Container versions.
 
 ### Kubernetes Tools
 - `kubectl` - Kubernetes command-line tool
@@ -77,7 +77,7 @@ cd kina
 cargo install --path kina-cli
 
 # OR using mise (if installed)
-mise run kina-install
+mise run kina:install
 ```
 
 ### Option 2: Development Setup with mise
@@ -88,7 +88,7 @@ git clone https://github.com/vinnie357/kina.git
 cd kina
 
 # Set up development environment (installs Rust, tools, and dependencies)
-mise run dev-setup
+mise run setup:dev
 
 # Build and install
 mise run install
@@ -97,21 +97,21 @@ mise run install
 ### Verification
 
 ```bash
-# Verify installation
-kina --version
+# Verify installation (shows kina and Apple Container versions)
+kina
 
-# Check Apple Container availability (REQUIRED)
-mise run container-check  # If using mise
+# Check Apple Container availability (REQUIRED, 0.5.0+)
+mise run container:check  # If using mise
 # OR manually check:
 container --version
 container system start  # Start the service if not running
 
 # Optional: Check Kubernetes tools
-mise run k8s-check  # If using mise
+mise run k8s:check  # If using mise
 kubectl version --client
 ```
 
-**⚠️ Important**: Apple Container CLI must be available before creating clusters. If `container --version` fails, install Apple Container first.
+**⚠️ Important**: Apple Container 0.5.0+ must be available before creating clusters. kina auto-detects and validates the version at startup. Run `kina status` to see Apple Container version information.
 
 ## Quick Start
 
@@ -152,18 +152,18 @@ kina status my-cluster
 kina status my-cluster --verbose
 ```
 
-### Complete Demo Setup
+### Integration Test Cluster
 
 **Option A: Using mise (if installed)**
 ```bash
-# Create a complete demo environment with ingress and test application
-mise run demo-cluster
+# Create an integration test cluster with ingress and demo app
+mise run test:cluster
 
-# Test the most recent demo cluster
-mise run demo-test
+# Validate the most recent test cluster
+mise run test:cluster:validate
 
-# Clean up all demo clusters (removes clusters with 'demo-' prefix)
-mise run demo-cleanup
+# Clean up all test clusters (removes clusters with 'demo-' prefix)
+mise run test:cluster:cleanup
 ```
 
 **Option B: Manual setup (without mise)**
@@ -381,21 +381,21 @@ kina uses [mise](https://mise.jdx.dev/) for development environment management a
 
 ```bash
 # Complete development environment setup
-mise run dev-setup
+mise run setup:dev
 
 # Individual setup steps (if you prefer manual setup)
 mise run setup                    # Install Rust components (rustfmt, clippy, cargo-audit)
-mise run install-k8s-tools       # Install kubectl, kubectx, kubens via mise
-mise run container-check          # Verify Apple Container CLI availability
-mise run k8s-check               # Verify Kubernetes tools installation
+mise run k8s:install              # Install kubectl, kubectx, kubens via mise
+mise run container:check          # Verify Apple Container CLI availability
+mise run k8s:check                # Verify Kubernetes tools installation
 ```
 
-**What `mise run dev-setup` does:**
+**What `mise run setup:dev` does:**
 - Installs Rust toolchain components (rustfmt, clippy)
 - Installs cargo-audit for security dependency scanning
 - Creates kina configuration directories (`~/.config/kina`, `~/.local/share/kina`)
 - Installs Kubernetes tools (kubectx, kubens) via mise package manager
-- Verifies Apple Container CLI is available
+- Verifies Apple Container CLI is available (0.5.0+ required)
 - Checks all tool installations
 
 ### Node Image Building
@@ -404,19 +404,19 @@ kina requires custom Kubernetes node images optimized for Apple Container. These
 
 ```bash
 # Build custom kina node image
-mise run build-node-image
+mise run image:build
 
 # Test the built node image
-mise run test-node-image
+mise run image:test
 
 # Build and test in one command
-mise run build-and-test-image
+mise run image:validate
 
 # List available images
-mise run list-images
+mise run image:list
 
 # Clean up unused images
-mise run clean-images
+mise run image:clean
 ```
 
 **Node Image Components:**
@@ -431,6 +431,28 @@ The built images are tagged as `kina/node:v1.31.0` and can be used with:
 kina create my-cluster --image kina/node:v1.31.0
 ```
 
+### Task Tracking
+
+kina uses [beads](https://github.com/lumen-org/beads) (`bd`) for distributed git-backed task tracking. Tasks are stored in the `.beads/` directory and synced via git.
+
+```bash
+bd ready                         # Find tasks ready to work on (no blockers)
+bd list                          # List all open tasks
+bd show <id>                     # View task details
+bd update <id> --status in_progress  # Claim a task
+bd close <id>                    # Complete a task
+```
+
+See [AGENTS.md](AGENTS.md) for the full beads workflow.
+
+### Pre-commit and Secret Scanning
+
+`mise run pre-commit` runs formatting, linting, tests, audit, and **gitleaks secret scanning** before each commit. Gitleaks is also available standalone:
+
+```bash
+mise run gitleaks                # Run gitleaks secret scanner
+```
+
 ### Common Development Tasks
 
 ```bash
@@ -438,8 +460,8 @@ kina create my-cluster --image kina/node:v1.31.0
 mise run build                   # Release build
 mise run dev                     # Development build
 mise run test                    # Run tests
-mise run kina-install            # Install kina CLI from project root
-mise run pre-commit              # Format, lint, test, audit
+mise run kina:install            # Install kina CLI from project root
+mise run pre-commit              # Format, lint, test, audit, gitleaks
 mise run ci                      # Run full CI pipeline locally
 mise run release                 # Build optimized release binary
 
@@ -448,6 +470,7 @@ mise run fmt                     # Format code with rustfmt
 mise run lint                    # Run clippy with strict settings
 mise run audit                   # Security audit with cargo-audit
 mise run check                   # Check code without building
+mise run gitleaks                # Secret scanning with gitleaks
 
 # Documentation and utilities
 mise run docs                    # Generate and open documentation
@@ -457,17 +480,16 @@ mise run bench                   # Run benchmarks
 
 # CLI testing
 mise run kina -- create test     # Run kina with arguments (release build)
-mise run kina-dev -- --help      # Run kina in dev mode (faster build)
-mise run test-cli                # Basic CLI functionality tests
+mise run kina:dev -- --help      # Run kina in dev mode (faster build)
+mise run test:cli                # Basic CLI functionality tests
 
 # Available tasks
 mise tasks                       # List all available mise tasks
-mise run help                    # Show available development tasks
 
-# Demo and testing workflows
-mise run demo-cluster            # Create complete demo with ingress
-mise run demo-test               # Test most recent demo cluster
-mise run demo-cleanup            # Clean up all demo clusters
+# Integration testing workflows
+mise run test:cluster            # Create test cluster with ingress and demo app
+mise run test:cluster:validate   # Validate most recent test cluster
+mise run test:cluster:cleanup    # Clean up all test clusters
 ```
 
 ### Project Structure
@@ -482,9 +504,15 @@ kina/
 │   │   └── main.rs            # Application entry point
 │   ├── tests/                 # Integration tests
 │   ├── manifests/             # Kubernetes manifests
+│   ├── images/                # Custom node image Dockerfile
 │   └── Cargo.toml
-├── mise.toml                  # Development automation
-├── Cargo.toml                 # Workspace configuration
+├── scripts/                    # Extracted mise task scripts (Nushell)
+├── docs/                       # Research, planning, and development docs
+├── .beads/                     # Distributed task tracking (beads)
+├── CLAUDE.md                   # AI assistant context
+├── AGENTS.md                   # Beads workflow for AI agents
+├── mise.toml                   # Development automation
+├── Cargo.toml                  # Workspace configuration
 └── README.md
 ```
 
@@ -572,11 +600,12 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Development Workflow
 
 1. **Fork and Clone**: Fork the repository and clone your fork
-2. **Setup Environment**: Run `mise run dev-setup` for complete setup
-3. **Create Branch**: Create a feature branch for your changes
-4. **Develop**: Make changes with comprehensive tests
-5. **Quality Checks**: Run `mise run pre-commit` before committing
-6. **Submit PR**: Create a pull request with clear description
+2. **Setup Environment**: Run `mise run setup:dev` for complete setup
+3. **Find Work**: Run `bd ready` to find available tasks
+4. **Create Branch**: Create a feature branch for your changes
+5. **Develop**: Make changes with comprehensive tests
+6. **Quality Checks**: Run `mise run pre-commit` before committing (includes gitleaks)
+7. **Submit PR**: Create a pull request with clear description
 
 ### Code Quality
 
@@ -596,29 +625,3 @@ at your option.
 ---
 
 **Note**: kina is in active development. While functional, some features are still being implemented. See the [project roadmap](https://github.com/vinnie357/kina/projects) for current status and planned features.
-
-## Project Source Prompt
-
-kina
-
-kubernetes in apple container based on kind
-
-kina will be a cli that handles all the same workflows that kind (kubernetes in docker) does but using apple container cli
-
-the cli will be in rustlang
-
-requires:
-macos 15.6 or 26
-apple container
-
-research requirements:
-kind
-apple container
-kubernetes
-nginx-ingress
-kind- single node cluster
-common k8s tools
-kubectl,kubectx,kuebens,k9s, etc
-
-development:
-using mise, mise tasks, and a mise.toml for setup and common commands

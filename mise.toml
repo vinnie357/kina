@@ -90,7 +90,7 @@ description = "Run CI pipeline (fmt check, clippy, test)"
 run = "nu scripts/ci.nu"
 
 [tasks."pre-commit"]
-description = "Run pre-commit checks (fmt, lint, test, audit)"
+description = "Run pre-commit checks (fmt, lint, test, audit, gitleaks)"
 run = "nu scripts/pre-commit.nu"
 
 [tasks.coverage]
