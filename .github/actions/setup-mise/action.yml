@@ -1,0 +1,23 @@
+name: Setup mise
+description: Install mise with caching (run mise trust/install in workflow for working-directory support)
+
+runs:
+  using: composite
+  steps:
+    - name: Cache mise
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.local/bin/mise
+          ~/.local/share/mise
+        key: mise-${{ runner.os }}-${{ hashFiles('mise.toml', '**/mise.toml') }}
+        restore-keys: |
+          mise-${{ runner.os }}-
+
+    - name: Install mise
+      shell: bash
+      run: |
+        if [ ! -f "$HOME/.local/bin/mise" ]; then
+          curl https://mise.run | sh
+        fi
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
