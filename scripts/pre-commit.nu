@@ -34,4 +34,14 @@ if $result.exit_code != 0 {
 }
 print "  OK audit"
 
+print "  gitleaks..."
+let result = (do { nu -c "mise run gitleaks" } | complete)
+if $result.exit_code != 0 {
+    print "  FAIL gitleaks"
+    print $result.stdout
+    print $result.stderr
+    exit $result.exit_code
+}
+print "  OK gitleaks"
+
 print "pre-commit passed"

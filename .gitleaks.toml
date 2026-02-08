@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+# Cilium Helm-generated template TLS certificates that existed in a historical commit.
+# The manifest (kina-cli/manifests/cilium.yaml) has been removed, but the certs
+# remain in git history. These were placeholder certs, not real secrets.
+[[allowlists]]
+description = "historical Cilium manifest template certs"
+commits = ["e7fa62a6091bafefd5d0dcf265978ee2d5f5bfad"]
