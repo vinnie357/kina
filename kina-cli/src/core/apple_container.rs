@@ -931,7 +931,7 @@ impl AppleContainerClient {
 
         // First, save the image to a tar file
         let temp_dir = std::env::temp_dir();
-        let image_tar = temp_dir.join(format!("{}.tar", image.replace('/', "_").replace(':', "_")));
+        let image_tar = temp_dir.join(format!("{}.tar", image.replace(['/', ':'], "_")));
 
         // Export the image
         let mut cmd = std::process::Command::new("docker");
