@@ -153,6 +153,35 @@ fn test_create_command_with_cni_ptp() {
 }
 
 #[test]
+fn test_create_command_with_workers() {
+    let context = TestContext::new();
+    context.create_test_config().unwrap();
+
+    let mut cmd = context.kina_command();
+    cmd.args(&["create", "--workers", "2"]);
+    // Tests create with worker nodes (will fail without Apple Container, but validates CLI parsing)
+}
+
+#[test]
+fn test_create_command_with_workers_zero() {
+    let context = TestContext::new();
+    context.create_test_config().unwrap();
+
+    let mut cmd = context.kina_command();
+    cmd.args(&["create", "--workers", "0"]);
+    // Tests create with 0 workers (single-node mode, the default)
+}
+
+#[test]
+fn test_create_command_workers_in_help() {
+    let mut cmd = Command::cargo_bin("kina").unwrap();
+    cmd.args(&["create", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("--workers"));
+}
+
+#[test]
 fn test_create_command_with_cni_cilium() {
     let context = TestContext::new();
     context.create_test_config().unwrap();

@@ -35,8 +35,18 @@ for cluster_name in $demo_clusters {
         log $"Deleted cluster ($cluster_name)"
     } else {
         warn $"Failed to delete ($cluster_name), trying manual cleanup..."
+        # Stop and delete control-plane
         do { ^container stop $"($cluster_name)-control-plane" } | complete
         do { ^container delete $"($cluster_name)-control-plane" } | complete
+        # Stop and delete worker nodes (KIND naming: -worker, -worker-2, -worker-3, ...)
+        for i in 1..5 {
+            let worker_name = if $i == 1 { $"($cluster_name)-worker" } else { $"($cluster_name)-worker-($i)" }
+            let check = (do { ^container stop $worker_name } | complete)
+            if $check.exit_code == 0 {
+                do { ^container delete $worker_name } | complete
+                log $"Cleaned up ($worker_name)"
+            }
+        }
     }
 
     let kubeconfig = $"($env.HOME)/.kube/($cluster_name)"

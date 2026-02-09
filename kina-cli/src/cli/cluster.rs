@@ -35,6 +35,10 @@ pub struct CreateArgs {
     #[arg(long)]
     pub skip_csr_approval: bool,
 
+    /// Number of worker nodes (0 = single-node cluster with combined roles)
+    #[arg(long, default_value = "0")]
+    pub workers: u32,
+
     /// CNI plugin to use (ptp or cilium)
     #[arg(long, value_enum, default_value = "ptp")]
     pub cni: CniPluginArg,
@@ -197,8 +201,12 @@ impl CreateArgs {
             name: self.name.clone(),
             image: self.image.clone(),
             config_file: self.config.as_ref().map(PathBuf::from),
-            kubernetes_version: None,  // Use default
-            workers: None,             // Use default
+            kubernetes_version: None, // Use default
+            workers: if self.workers > 0 {
+                Some(self.workers)
+            } else {
+                None
+            },
             control_plane_nodes: None, // Use default
             wait_timeout: self.wait,
             retain_on_failure: self.retain,

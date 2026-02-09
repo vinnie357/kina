@@ -302,7 +302,12 @@ impl ClusterConfig {
                     control_plane_count += 1;
                 }
                 NodeRole::Worker => {
-                    node.name = format!("{}-worker{}", self.name, worker_count + 1);
+                    // KIND convention: first worker is {name}-worker, subsequent are {name}-worker-N
+                    if worker_count == 0 {
+                        node.name = format!("{}-worker", self.name);
+                    } else {
+                        node.name = format!("{}-worker-{}", self.name, worker_count + 1);
+                    }
                     worker_count += 1;
                 }
             }

@@ -124,6 +124,14 @@ impl std::fmt::Display for NodeRole {
     }
 }
 
+/// Information extracted from kubeadm init output needed for worker joins
+#[derive(Debug, Clone)]
+pub struct KubeadmJoinInfo {
+    pub token: String,
+    pub ca_cert_hash: String,
+    pub control_plane_endpoint: String,
+}
+
 /// Result of executing a command in a container
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
