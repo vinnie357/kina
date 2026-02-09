@@ -7,3 +7,13 @@ useDefault = true
 [[allowlists]]
 description = "historical Cilium manifest template certs"
 commits = ["e7fa62a6091bafefd5d0dcf265978ee2d5f5bfad"]
+
+# Unit test dummy kubeadm tokens and CA cert hashes (not real secrets)
+[[allowlists]]
+description = "kubeadm unit test fixture data"
+paths = ["kina-cli/src/core/apple_container.rs"]
+regexTarget = "match"
+regexes = [
+    "abcdef\\.0123456789abcdef",
+    "sha256:abc123def456",
+]
