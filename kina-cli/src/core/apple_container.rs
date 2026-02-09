@@ -4,7 +4,8 @@ use std::fs;
 use tracing::{debug, info, warn};
 
 use super::types::{
-    ClusterInfo, ClusterStatus, CreateClusterOptions, LoadImageOptions, NodeInfo, NodeRole,
+    ClusterInfo, ClusterStatus, CreateClusterOptions, KubeadmJoinInfo, LoadImageOptions, NodeInfo,
+    NodeRole,
 };
 use crate::config::Config;
 
@@ -173,19 +174,103 @@ impl AppleContainerClient {
             options.name, options.image
         );
 
-        // Note: Apple Container VMs cannot communicate with each other until macOS 26
-        // Creating single-node cluster with combined control-plane/worker roles
+        let worker_count = options.workers.unwrap_or(0);
 
-        let node_name = format!("{}-control-plane", options.name);
-        info!(
-            "Creating single-node cluster with combined roles: {}",
-            node_name
-        );
-
-        self.create_single_node(&options.name, &node_name, &options.image)
-            .await?;
+        if worker_count == 0 {
+            // Single-node cluster with combined control-plane/worker roles
+            let node_name = format!("{}-control-plane", options.name);
+            info!(
+                "Creating single-node cluster with combined roles: {}",
+                node_name
+            );
+            self.create_single_node(&options.name, &node_name, &options.image)
+                .await?;
+        } else {
+            // Multi-node cluster: 1 control-plane + N workers
+            info!(
+                "Creating multi-node cluster with 1 control-plane + {} workers",
+                worker_count
+            );
+            self.create_multi_node_cluster(options, worker_count)
+                .await?;
+        }
 
         info!("Cluster '{}' created successfully", options.name);
+        Ok(())
+    }
+
+    /// Create a multi-node cluster with separate control-plane and worker nodes
+    async fn create_multi_node_cluster(
+        &self,
+        options: &CreateClusterOptions,
+        worker_count: u32,
+    ) -> Result<()> {
+        let cp_name = format!("{}-control-plane", options.name);
+
+        // 1. Create control-plane container
+        self.create_control_plane_node(&options.name, &cp_name, &options.image, true)
+            .await?;
+
+        // 2. Wait for control-plane container to be ready and get IP
+        self.wait_for_container_ready(&cp_name).await?;
+        let cp_ip = self.get_container_ip(&cp_name).await?;
+        info!("Control-plane '{}' running at IP: {}", cp_name, cp_ip);
+
+        // 3. Initialize Kubernetes on control-plane and get join info
+        let join_info = self
+            .initialize_kubernetes_cluster_with_join_info(&cp_name, &cp_ip, &options.name)
+            .await?;
+
+        // 4. Setup kubeconfig early (user gets kubectl access even if workers fail)
+        self.setup_kubeconfig(&options.name, &cp_name, &cp_ip)
+            .await?;
+
+        // 5. Install CNI on control-plane (must be before workers join)
+        self.install_cni_plugin(&cp_name).await?;
+
+        // 6. Create and join worker nodes sequentially
+        for i in 0..worker_count {
+            // KIND convention: first worker is {name}-worker, subsequent are {name}-worker-N
+            let worker_name = if i == 0 {
+                format!("{}-worker", options.name)
+            } else {
+                format!("{}-worker-{}", options.name, i + 1)
+            };
+
+            info!(
+                "Creating worker node {}/{}: {}",
+                i + 1,
+                worker_count,
+                worker_name
+            );
+
+            self.create_worker_node(&options.name, &worker_name, &options.image)
+                .await?;
+
+            self.wait_for_container_ready(&worker_name).await?;
+            let worker_ip = self.get_container_ip(&worker_name).await?;
+            info!("Worker '{}' running at IP: {}", worker_name, worker_ip);
+
+            self.join_worker_node(&worker_name, &worker_ip, &join_info)
+                .await?;
+
+            // PTP CNI requires the config file on each node (it's not a DaemonSet).
+            // Cilium deploys as a DaemonSet from the control-plane and auto-rolls to workers.
+            if matches!(
+                self.config.cluster.default_cni,
+                crate::config::CniPlugin::Ptp
+            ) {
+                self.install_ptp_cni(&worker_name).await?;
+            }
+        }
+
+        // Note: Do NOT remove control-plane taint in multi-node mode.
+        // Workers handle workloads; control-plane stays dedicated.
+
+        info!(
+            "Multi-node Kubernetes cluster '{}' initialized successfully",
+            options.name
+        );
         Ok(())
     }
 
@@ -297,7 +382,6 @@ impl AppleContainerClient {
     }
 
     /// Create a control plane node
-    #[allow(dead_code)]
     async fn create_control_plane_node(
         &self,
         cluster_name: &str,
@@ -341,6 +425,8 @@ impl AppleContainerClient {
             "container=docker",
             "--env",
             &hostname_env,
+            "--env",
+            "KINA_NODE_TYPE=control-plane",
             image,
             "/sbin/init", // Start systemd in VM
         ]);
@@ -365,7 +451,6 @@ impl AppleContainerClient {
     }
 
     /// Create a worker node
-    #[allow(dead_code)]
     async fn create_worker_node(
         &self,
         cluster_name: &str,
@@ -402,6 +487,8 @@ impl AppleContainerClient {
             "container=docker",
             "--env",
             &hostname_env,
+            "--env",
+            "KINA_NODE_TYPE=worker",
             image,
             "/sbin/init", // Start systemd in VM
         ]);
@@ -653,7 +740,7 @@ impl AppleContainerClient {
                     // Add node information
                     cluster_info.nodes.push(NodeInfo {
                         name: container_name.to_string(),
-                        role: if role == "control-plane" {
+                        role: if role.contains("control-plane") {
                             NodeRole::ControlPlane
                         } else {
                             NodeRole::Worker
@@ -1190,35 +1277,34 @@ impl AppleContainerClient {
         ))
     }
 
-    /// Initialize Kubernetes cluster with kubeadm
-    async fn initialize_kubernetes_cluster(&self, container_name: &str, vm_ip: &str) -> Result<()> {
-        info!(
-            "Initializing Kubernetes cluster in container '{}'",
-            container_name
-        );
-
-        // Create kubeadm configuration
-        let kubeadm_config = format!(
+    /// Generate kubeadm init configuration YAML
+    fn generate_kubeadm_init_config(
+        &self,
+        container_name: &str,
+        vm_ip: &str,
+        cluster_name: &str,
+    ) -> String {
+        format!(
             r#"apiVersion: kubeadm.k8s.io/v1beta3
 kind: InitConfiguration
 localAPIEndpoint:
-  advertiseAddress: "{}"
+  advertiseAddress: "{vm_ip}"
   bindPort: 6443
 nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{}"
-    provider-id: "kind://docker/kina-cluster/{}"
+    node-ip: "{vm_ip}"
+    provider-id: "kind://docker/{cluster_name}/{container_name}"
 ---
 apiVersion: kubeadm.k8s.io/v1beta3
 kind: ClusterConfiguration
 kubernetesVersion: v1.31.0
-clusterName: "kina-cluster"
-controlPlaneEndpoint: "{}:6443"
+clusterName: "{cluster_name}"
+controlPlaneEndpoint: "{vm_ip}:6443"
 apiServer:
   certSANs:
-  - "{}"
-  - "{}"
+  - "{vm_ip}"
+  - "{container_name}"
   - "localhost"
   - "127.0.0.1"
   extraArgs:
@@ -1240,8 +1326,8 @@ kind: JoinConfiguration
 nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{}"
-    provider-id: "kind://docker/kina-cluster/{}"
+    node-ip: "{vm_ip}"
+    provider-id: "kind://docker/{cluster_name}/{container_name}"
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
@@ -1263,9 +1349,15 @@ healthzBindAddress: "0.0.0.0:10256"
 metricsBindAddress: "0.0.0.0:10249"
 clusterCIDR: "10.244.0.0/16"
 "#,
-            vm_ip, vm_ip, container_name, vm_ip, vm_ip, container_name, vm_ip, container_name
-        );
+        )
+    }
 
+    /// Write kubeadm config and run kubeadm init in a container
+    fn run_kubeadm_init(
+        &self,
+        container_name: &str,
+        kubeadm_config: &str,
+    ) -> Result<std::process::Output> {
         // Write kubeadm config to container
         let mut cmd = std::process::Command::new(&self.cli_path);
         cmd.args([
@@ -1298,7 +1390,23 @@ clusterCIDR: "10.244.0.0/16"
         ]);
 
         info!("Running kubeadm init (this may take a few minutes)...");
-        let output = cmd.output().context("Failed to run kubeadm init")?;
+        cmd.output().context("Failed to run kubeadm init")
+    }
+
+    /// Initialize Kubernetes cluster with kubeadm (single-node, no join info needed)
+    async fn initialize_kubernetes_cluster(&self, container_name: &str, vm_ip: &str) -> Result<()> {
+        info!(
+            "Initializing Kubernetes cluster in container '{}'",
+            container_name
+        );
+
+        // Extract cluster name from container name (e.g., "mycluster-control-plane" -> "mycluster")
+        let cluster_name = container_name
+            .strip_suffix("-control-plane")
+            .unwrap_or(container_name);
+
+        let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
+        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1311,6 +1419,172 @@ clusterCIDR: "10.244.0.0/16"
         }
 
         info!("Kubernetes cluster initialized successfully");
+        Ok(())
+    }
+
+    /// Initialize Kubernetes cluster and extract join info for multi-node setup
+    async fn initialize_kubernetes_cluster_with_join_info(
+        &self,
+        container_name: &str,
+        vm_ip: &str,
+        cluster_name: &str,
+    ) -> Result<KubeadmJoinInfo> {
+        info!(
+            "Initializing Kubernetes cluster in container '{}' (multi-node)",
+            container_name
+        );
+
+        let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
+        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(anyhow::anyhow!(
+                "kubeadm init failed:\nStdout: {}\nStderr: {}",
+                stdout,
+                stderr
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let join_info = Self::parse_kubeadm_join_info(&stdout, vm_ip)?;
+
+        info!("Kubernetes cluster initialized, join token extracted for workers");
+        Ok(join_info)
+    }
+
+    /// Parse kubeadm join info from kubeadm init output
+    /// Looks for: kubeadm join <endpoint> --token <token> --discovery-token-ca-cert-hash <hash>
+    pub fn parse_kubeadm_join_info(output: &str, cp_ip: &str) -> Result<KubeadmJoinInfo> {
+        let mut token = None;
+        let mut ca_cert_hash = None;
+
+        // kubeadm outputs the join command across potentially multiple lines with backslash continuations
+        // First, normalize the output by joining continuation lines
+        let normalized = output.replace("\\\n", " ");
+
+        for line in normalized.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("kubeadm join") {
+                // Parse the join command line for token and hash
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                for (i, part) in parts.iter().enumerate() {
+                    if *part == "--token" {
+                        if let Some(val) = parts.get(i + 1) {
+                            token = Some(val.to_string());
+                        }
+                    }
+                    if *part == "--discovery-token-ca-cert-hash" {
+                        if let Some(val) = parts.get(i + 1) {
+                            ca_cert_hash = Some(val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        let token = token.ok_or_else(|| {
+            anyhow::anyhow!("Failed to extract join token from kubeadm init output")
+        })?;
+        let ca_cert_hash = ca_cert_hash.ok_or_else(|| {
+            anyhow::anyhow!("Failed to extract CA cert hash from kubeadm init output")
+        })?;
+
+        Ok(KubeadmJoinInfo {
+            token,
+            ca_cert_hash,
+            control_plane_endpoint: format!("{}:6443", cp_ip),
+        })
+    }
+
+    /// Join a worker node to the cluster using kubeadm join
+    async fn join_worker_node(
+        &self,
+        worker_name: &str,
+        worker_ip: &str,
+        join_info: &KubeadmJoinInfo,
+    ) -> Result<()> {
+        info!("Joining worker '{}' to cluster", worker_name);
+
+        // Write a JoinConfiguration YAML to the worker
+        let join_config = format!(
+            r#"apiVersion: kubeadm.k8s.io/v1beta3
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "{endpoint}"
+    token: "{token}"
+    caCertHashes:
+    - "{hash}"
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+    node-ip: "{worker_ip}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+failSwapOn: false
+"#,
+            endpoint = join_info.control_plane_endpoint,
+            token = join_info.token,
+            hash = join_info.ca_cert_hash,
+            worker_ip = worker_ip,
+        );
+
+        // Write join config to worker container
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args([
+            "exec",
+            worker_name,
+            "sh",
+            "-c",
+            &format!(
+                "mkdir -p /kind && cat > /kind/kubeadm-join.conf << 'EOF'\n{}\nEOF",
+                join_config
+            ),
+        ]);
+
+        let output = cmd
+            .output()
+            .context("Failed to write join config to worker")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "Failed to write join config to worker '{}': {}",
+                worker_name,
+                stderr
+            ));
+        }
+
+        // Run kubeadm join
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args([
+            "exec",
+            worker_name,
+            "kubeadm",
+            "join",
+            "--config=/kind/kubeadm-join.conf",
+            "--skip-phases=preflight",
+            "--v=1",
+        ]);
+
+        info!("Running kubeadm join on worker '{}'...", worker_name);
+        let output = cmd.output().context("Failed to run kubeadm join")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(anyhow::anyhow!(
+                "kubeadm join failed on worker '{}':\nStdout: {}\nStderr: {}",
+                worker_name,
+                stdout,
+                stderr
+            ));
+        }
+
+        info!("Worker '{}' joined cluster successfully", worker_name);
         Ok(())
     }
 
@@ -1492,24 +1766,31 @@ rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
 
         let mut kubeconfig = String::from_utf8_lossy(&output.stdout).to_string();
 
-        // Update server URL to use VM IP
+        // Update server URL to use VM IP — replace any server line with the correct VM IP
         kubeconfig = kubeconfig
-            .replace(
-                "https://192.168.64.5:6443",
-                &format!("https://{}:6443", vm_ip),
-            )
             .replace("https://127.0.0.1:6443", &format!("https://{}:6443", vm_ip))
             .replace("https://localhost:6443", &format!("https://{}:6443", vm_ip));
 
-        // Replace cluster name, context names, and user names
+        // Also fix any IP that kubeadm may have advertised (the advertiseAddress)
+        // by replacing server lines generically
+        kubeconfig = kubeconfig
+            .lines()
+            .map(|line| {
+                if line.trim().starts_with("server: https://") && line.contains(":6443") {
+                    format!("    server: https://{}:6443", vm_ip)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Replace context and user names to be cluster-specific
+        // kubeadm generates names like "kubernetes-admin@{clusterName}" and "kubernetes-admin"
+        let kubeadm_context = format!("kubernetes-admin@{}", cluster_name);
         let cluster_admin = format!("{}-admin", cluster_name);
         kubeconfig = kubeconfig
-            .replace("name: kina-cluster", &format!("name: {}", cluster_name))
-            .replace(
-                "cluster: kina-cluster",
-                &format!("cluster: {}", cluster_name),
-            )
-            .replace("kubernetes-admin@kina-cluster", cluster_name)
+            .replace(&kubeadm_context, cluster_name)
             .replace(
                 "name: kubernetes-admin",
                 &format!("name: {}", cluster_admin),
@@ -1524,5 +1805,58 @@ rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
 
         info!("Kubeconfig saved successfully");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_kubeadm_join_info_standard() {
+        let output = r#"
+Your Kubernetes control-plane has initialized successfully!
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
+    --discovery-token-ca-cert-hash sha256:abc123def456
+"#;
+        let result = AppleContainerClient::parse_kubeadm_join_info(output, "192.168.64.5").unwrap();
+        assert_eq!(result.token, "abcdef.0123456789abcdef");
+        assert_eq!(result.ca_cert_hash, "sha256:abc123def456");
+        assert_eq!(result.control_plane_endpoint, "192.168.64.5:6443");
+    }
+
+    #[test]
+    fn test_parse_kubeadm_join_info_single_line() {
+        let output = "kubeadm join 10.0.0.1:6443 --token mytoken.1234567890abcdef --discovery-token-ca-cert-hash sha256:deadbeef";
+        let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1").unwrap();
+        assert_eq!(result.token, "mytoken.1234567890abcdef");
+        assert_eq!(result.ca_cert_hash, "sha256:deadbeef");
+        assert_eq!(result.control_plane_endpoint, "10.0.0.1:6443");
+    }
+
+    #[test]
+    fn test_parse_kubeadm_join_info_missing_token() {
+        let output = "kubeadm join 10.0.0.1:6443 --discovery-token-ca-cert-hash sha256:deadbeef";
+        let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("token"));
+    }
+
+    #[test]
+    fn test_parse_kubeadm_join_info_missing_hash() {
+        let output = "kubeadm join 10.0.0.1:6443 --token mytoken.1234567890abcdef";
+        let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("CA cert hash"));
+    }
+
+    #[test]
+    fn test_parse_kubeadm_join_info_no_join_command() {
+        let output = "Some other output without join info";
+        let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1");
+        assert!(result.is_err());
     }
 }

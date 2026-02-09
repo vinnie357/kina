@@ -115,6 +115,11 @@ description = "Create integration test cluster with ingress and demo app"
 run = "nu scripts/test-cluster.nu"
 timeout = "10m"
 
+[tasks."test:cluster:multi"]
+description = "Create multi-node integration test cluster (1 control-plane + 2 workers)"
+run = "nu scripts/test-cluster-multi.nu"
+timeout = "15m"
+
 [tasks."test:cluster:validate"]
 description = "Validate integration test cluster by testing the demo app"
 run = "nu scripts/test-cluster-validate.nu"
