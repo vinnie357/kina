@@ -124,6 +124,14 @@ timeout = "15m"
 description = "Validate integration test cluster by testing the demo app"
 run = "nu scripts/test-cluster-validate.nu"
 
+[tasks."test:cluster:hosts"]
+description = "Add demo cluster worker IPs to /etc/hosts for browser testing (requires sudo)"
+run = "nu scripts/test-cluster-hosts.nu"
+
+[tasks."test:cluster:hosts:clean"]
+description = "Remove kina entries from /etc/hosts"
+run = "KINA_HOSTS_CLEAN=1 nu scripts/test-cluster-hosts.nu"
+
 [tasks."test:cluster:cleanup"]
 description = "Clean up integration test clusters (removes demo-* clusters)"
 run = "nu scripts/test-cluster-cleanup.nu"
