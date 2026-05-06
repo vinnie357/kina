@@ -70,7 +70,7 @@ container system start
 
 ### Kubernetes Tools
 - `kubectl` - Kubernetes command-line tool
-- `kubectx` & `kubens` - Context and namespace management (optional, managed by mise)
+- `kubectx` & `kubens` - Context and namespace management (optional)
 
 ### Development Tools (Optional)
 - [mise](https://mise.jdx.dev/) - Development environment manager with task automation
@@ -98,9 +98,6 @@ mise run kina:install
 git clone https://github.com/vinnie357/kina.git
 cd kina
 
-# Set up development environment (installs Rust, tools, and dependencies)
-mise run setup:dev
-
 # Build and install
 mise run install
 ```
@@ -117,8 +114,6 @@ mise run container:check  # If using mise
 container --version
 container system start  # Start the service if not running
 
-# Optional: Check Kubernetes tools
-mise run k8s:check  # If using mise
 kubectl version --client
 ```
 
@@ -331,11 +326,6 @@ log_dir = null
 ### Environment Variables
 
 ```bash
-# Configuration
-export KINA_CONFIG_DIR="$HOME/.config/kina"
-export KINA_DATA_DIR="$HOME/.local/share/kina"
-
-# Logging
 export RUST_LOG="info"
 export RUST_BACKTRACE="1"
 ```
@@ -391,23 +381,12 @@ kina create test-cilium --cni cilium
 kina uses [mise](https://mise.jdx.dev/) for development environment management and task automation. This provides consistent tooling and streamlined workflows.
 
 ```bash
-# Complete development environment setup
-mise run setup:dev
+# Install all tools via mise
+mise install
 
-# Individual setup steps (if you prefer manual setup)
-mise run setup                    # Install Rust components (rustfmt, clippy, cargo-audit)
-mise run k8s:install              # Install kubectl, kubectx, kubens via mise
-mise run container:check          # Verify Apple Container CLI availability
-mise run k8s:check                # Verify Kubernetes tools installation
+# Verify Apple Container CLI availability
+mise run container:check
 ```
-
-**What `mise run setup:dev` does:**
-- Installs Rust toolchain components (rustfmt, clippy)
-- Installs cargo-audit for security dependency scanning
-- Creates kina configuration directories (`~/.config/kina`, `~/.local/share/kina`)
-- Installs Kubernetes tools (kubectx, kubens) via mise package manager
-- Verifies Apple Container CLI is available (0.5.0+ required)
-- Checks all tool installations
 
 ### Node Image Building
 
@@ -611,7 +590,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Development Workflow
 
 1. **Fork and Clone**: Fork the repository and clone your fork
-2. **Setup Environment**: Run `mise run setup:dev` for complete setup
+2. **Setup Environment**: Run `mise install` to install all tools
 3. **Find Work**: Run `bd ready` to find available tasks
 4. **Create Branch**: Create a feature branch for your changes
 5. **Develop**: Make changes with comprehensive tests

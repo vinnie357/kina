@@ -1,7 +1,7 @@
 #!/usr/bin/env nu
 
 let repo_root = (git rev-parse --show-toplevel | str trim)
-let image = "zricethezav/gitleaks"
+let image = "zricethezav/gitleaks:v8.30.1"
 
 # Build gitleaks arguments
 mut args = ["detect" "--source=/code" "-v"]

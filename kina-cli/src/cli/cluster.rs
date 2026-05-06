@@ -471,9 +471,7 @@ impl InstallArgs {
 
         // Get the current directory to find manifest files
         let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-        let manifest_dir = current_dir
-            .join("manifests")
-            .join("nginx-ingress");
+        let manifest_dir = current_dir.join("manifests").join("nginx-ingress");
 
         if !manifest_dir.exists() {
             return Err(anyhow::anyhow!(

@@ -1,17 +1,18 @@
+[settings]
+env_shell_expand = true
+
 [env]
 RUST_LOG = "info"
 RUST_BACKTRACE = "1"
-KINA_CONFIG_DIR = "$HOME/.config/kina"
-KINA_DATA_DIR = "$HOME/.local/share/kina"
 
 [tools]
 rust = "stable"
-kubectx = "latest"
-kubens = "latest"
-cilium-cli = "latest"
-"ubi:nushell/nushell" = { version = "0.112.2", exe = "nu" }
+cilium-cli = "0.19.2"
+"github:nushell/nushell" = { version = "0.112.2", exe = "nu" }
 act = "0.2.87"
 "github:gastownhall/beads" = "1.0.3"
+"cargo:cargo-audit" = "0.22.1"
+"cargo:cargo-tarpaulin" = "0.35.4"
 
 # ============================================================================
 # BUILD & DEVELOPMENT
@@ -51,6 +52,11 @@ description = "Format code with rustfmt"
 run = "cargo fmt"
 dir = "kina-cli"
 
+[tasks."fmt:check"]
+description = "Check code formatting without modifying files"
+run = "cargo fmt -- --check"
+dir = "kina-cli"
+
 [tasks.lint]
 description = "Run clippy lints"
 run = "cargo clippy -- -D warnings"
@@ -72,6 +78,7 @@ dir = "kina-cli"
 
 [tasks.test]
 description = "Run all unit tests"
+depends = ["container:start"]
 run = "cargo test"
 dir = "kina-cli"
 
@@ -87,11 +94,11 @@ dir = "kina-cli"
 
 [tasks.ci]
 description = "Run CI pipeline (fmt check, clippy, test)"
-run = "nu scripts/ci.nu"
+depends = ["fmt:check", "lint", "test"]
 
 [tasks."pre-commit"]
 description = "Run pre-commit checks (fmt, lint, test, audit, gitleaks)"
-run = "nu scripts/pre-commit.nu"
+depends = ["fmt:check", "lint", "test", "audit", "gitleaks"]
 
 [tasks.coverage]
 description = "Generate test coverage report"
@@ -106,44 +113,45 @@ dir = "kina-cli"
 [tasks.audit]
 description = "Run security audit"
 run = "cargo audit"
-dir = "kina-cli"
 
 # Integration tests
 
 [tasks."test:cluster"]
 description = "Create integration test cluster with ingress and demo app"
+depends = ["container:start"]
 run = "nu scripts/test-cluster.nu"
 timeout = "10m"
 
 [tasks."test:cluster:multi"]
 description = "Create multi-node integration test cluster (1 control-plane + 2 workers)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-multi.nu"
 timeout = "15m"
 
 [tasks."test:cluster:validate"]
 description = "Validate integration test cluster by testing the demo app"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-validate.nu"
 
 [tasks."test:cluster:hosts"]
 description = "Add demo cluster worker IPs to /etc/hosts for browser testing (requires sudo)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-hosts.nu"
 
 [tasks."test:cluster:hosts:clean"]
 description = "Remove kina entries from /etc/hosts"
+depends = ["container:start"]
 run = "KINA_HOSTS_CLEAN=1 nu scripts/test-cluster-hosts.nu"
 
 [tasks."test:cluster:cleanup"]
 description = "Clean up integration test clusters (removes demo-* clusters)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-cleanup.nu"
 
 # GitHub Actions local testing
 
-[tasks."test:action"]
-description = "Test GitHub action locally using act (pull_request workflow)"
-run = "nu scripts/test-action.nu"
-
 [tasks."test:action:pr"]
-description = "Test GitHub action for pull_request workflow (with colima)"
+description = "Test GitHub action for pull_request workflow"
 run = "nu scripts/test-action-pr.nu"
 
 [tasks."test:action:push"]
@@ -174,6 +182,10 @@ run = "nu scripts/kina-use.nu"
 # CONTAINER & IMAGE MANAGEMENT
 # ============================================================================
 
+[tasks."container:start"]
+description = "Ensure Apple Container system is running, starting it if necessary"
+run = "nu scripts/container-start.nu"
+
 [tasks."container:check"]
 description = "Check Apple Container availability"
 run = """
@@ -189,14 +201,17 @@ if (which container | is-not-empty) {
 
 [tasks."image:build"]
 description = "Build custom Kubernetes node image"
+depends = ["container:start"]
 run = "nu scripts/image-build.nu"
 
 [tasks."image:list"]
 description = "List available container images"
+depends = ["container:start"]
 run = "container image list"
 
 [tasks."image:test"]
 description = "Test the custom node image"
+depends = ["container:start"]
 run = "nu scripts/image-test.nu"
 
 [tasks."image:validate"]
@@ -205,48 +220,13 @@ depends = ["image:build", "image:test"]
 
 [tasks."image:clean"]
 description = "Clean up unused container images"
+depends = ["container:start"]
 run = "nu -c 'let r = (do { ^container image prune -f } | complete); if $r.exit_code != 0 { print \"No images to clean\" } else { print $r.stdout }'"
 
-# ============================================================================
-# KUBERNETES TOOLS
-# ============================================================================
-
-[tasks."k8s:check"]
-description = "Check Kubernetes tools availability"
-run = "nu scripts/k8s-check.nu"
-
-[tasks."k8s:install"]
-description = "Install Kubernetes tools via mise"
-run = "mise install kubectx kubens"
-
-# ============================================================================
-# SETUP
-# ============================================================================
-
-[tasks.setup]
-description = "Set up development environment"
-run = [
-    "rustup component add rustfmt clippy",
-    "cargo install cargo-audit",
-    "cargo install cargo-tarpaulin",
-    "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
-]
-
-[tasks."setup:dev"]
-description = "Complete development environment setup"
-depends = ["setup", "k8s:install"]
-run = [
-    "mise run container:check",
-    "mise run k8s:check",
-]
-
 [tasks.release]
-description = "Build release binary"
-run = [
-    "mise run ci",
-    "cargo build --release",
-    "strip target/release/kina",
-]
+description = "Build and strip release binary"
+depends = ["ci", "build"]
+run = "strip target/release/kina"
 
 # ============================================================================
 # SECURITY
@@ -254,31 +234,8 @@ run = [
 
 [tasks.gitleaks]
 description = "Run gitleaks secret scanner (Apple Container runtime)"
+depends = ["container:start"]
 run = "nu scripts/gitleaks.nu"
-
-[tasks."gitleaks:docker"]
-description = "Run gitleaks secret scanner (Docker runtime)"
-run = "nu scripts/gitleaks-docker.nu"
-
-[tasks."gitleaks:colima"]
-description = "Run gitleaks secret scanner (Colima runtime)"
-run = "nu scripts/gitleaks-colima.nu"
-
-[tasks."gitleaks:stop"]
-description = "Stop all container runtimes"
-run = "nu scripts/gitleaks-stop.nu"
-
-# ============================================================================
-# CI/CD TOOLS
-# ============================================================================
-
-[tasks."colima:start"]
-description = "Start colima with Docker runtime (macOS only)"
-run = "nu scripts/colima-start.nu"
-
-[tasks."colima:stop"]
-description = "Stop colima"
-run = "nu scripts/colima-stop.nu"
 
 # ============================================================================
 # BEADS ISSUE TRACKING

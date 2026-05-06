@@ -7,43 +7,41 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: kina-cli
+    strategy:
+      matrix:
+        runner: [macos-26, macos-15]
+      fail-fast: false
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/setup-mise
 
       - name: Cache Rust toolchain
-        uses: actions/cache@v4
+        if: ${{ !env.ACT }}
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.rustup/toolchains
             ~/.cargo/registry
             ~/.cargo/git
             kina-cli/target
-          key: rust-${{ runner.os }}-${{ hashFiles('kina-cli/Cargo.lock') }}
+          key: rust-${{ matrix.runner }}-${{ hashFiles('kina-cli/Cargo.lock') }}
           restore-keys: |
-            rust-${{ runner.os }}-
+            rust-${{ matrix.runner }}-
 
       - name: Install tools
         run: |
           mise trust --all
           mise install
-          eval "$(mise activate bash)"
-          rustup default stable
-          echo "$PATH" >> $GITHUB_PATH
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: mise run fmt:check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: mise run lint
 
-      # Requires Apple Container CLI (macOS only) - run locally with mise run ci
-      # - name: Run tests
-      #   run: cargo test
+      - name: Run tests
+        run: mise run test
 
-      # - name: Build release
-      #   run: cargo build --release
+      - name: Build
+        run: mise run build
