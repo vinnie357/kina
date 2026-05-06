@@ -50,10 +50,21 @@
 ### Apple Container Installation
 Apple Container is **required** for kina to work. Install it first:
 
+**Option A — Homebrew (recommended):**
+```bash
+brew install container
+brew services start container
+
+# OR start the container system directly without brew
+container system start
+```
+
+**Option B — Manual:**
 1. **Download**: Get the latest installer from [Apple Container Releases](https://github.com/apple/container/releases)
 2. **Install**: Double-click the `.pkg` file and follow the installer prompts
 3. **Start Service**: Run `container system start` to start the API server
-4. **Verify**: Check installation with `container --version`
+
+**Verify**: Check installation with `container --version`
 
 **Note**: kina requires Apple Container **0.5.0 or later**. The version is automatically detected and validated when kina starts. Run `kina` (no arguments) to see your kina and Apple Container versions.
 
@@ -210,7 +221,7 @@ kubectl --kubeconfig ~/.kube/my-cluster get nodes
 ```bash
 # Create a new cluster
 kina create [NAME] [OPTIONS]
-  --image TEXT           Container image (default: kindest/node:v1.31.0)
+  --image TEXT           Container image (default: kina/node:v1.35.4)
   --config FILE          Cluster configuration file
   --wait SECONDS         Wait for cluster readiness
   --retain               Retain cluster on failure
@@ -285,7 +296,7 @@ kina uses TOML configuration files located at:
 ```toml
 [cluster]
 default_name = "kina"
-default_image = "kindest/node:v1.31.0"
+default_image = "kina/node:v1.35.4"
 default_wait_timeout = 300
 data_dir = "~/.local/share/kina"
 retain_on_failure = false
@@ -305,7 +316,7 @@ enable_ipv6 = false
 dns_servers = []
 
 [kubernetes]
-default_version = "v1.28.0"
+default_version = "v1.35.4"
 kubectl_path = null  # Auto-detected
 default_namespace = "default"
 kubeconfig_dir = "~/.config/kina/kubeconfig"
@@ -420,20 +431,20 @@ mise run image:clean
 ```
 
 **Node Image Components:**
-- **Base System**: Ubuntu with systemd for container orchestration
+- **Base System**: Debian (13-slim) with systemd for container orchestration
 - **Container Runtime**: containerd configured for Apple Container integration
-- **Kubernetes Components**: kubelet, kubeadm, kubectl (v1.31.0)
+- **Kubernetes Components**: kubelet, kubeadm, kubectl (v1.35.4)
 - **CNI Plugins**: PTP and Cilium support
 - **Init Scripts**: Apple Container-specific initialization and networking setup
 
-The built images are tagged as `kina/node:v1.31.0` and can be used with:
+The built images are tagged as `kina/node:v1.35.4` and can be used with:
 ```bash
-kina create my-cluster --image kina/node:v1.31.0
+kina create my-cluster --image kina/node:v1.35.4
 ```
 
 ### Task Tracking
 
-kina uses [beads](https://github.com/lumen-org/beads) (`bd`) for distributed git-backed task tracking. Tasks are stored in the `.beads/` directory and synced via git.
+kina uses [beads](https://github.com/gastownhall/beads) (`bd`) for distributed git-backed task tracking. Tasks are stored in the `.beads/` directory and synced via git.
 
 ```bash
 bd ready                         # Find tasks ready to work on (no blockers)
@@ -535,7 +546,7 @@ container system status
 echo $PATH | grep container
 ```
 
-**Solution**: If Apple Container is not found, install it from [Apple Container Releases](https://github.com/apple/container/releases). If installed but not working, restart the service with `container system restart`.
+**Solution**: If Apple Container is not found, install it via Homebrew (`brew install container`) or from [Apple Container Releases](https://github.com/apple/container/releases). If installed but not working, restart the service with `container system restart`.
 
 #### Cluster Creation Fails
 ```bash

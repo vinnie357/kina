@@ -216,6 +216,9 @@ impl AppleContainerClient {
         let cp_ip = self.get_container_ip(&cp_name).await?;
         info!("Control-plane '{}' running at IP: {}", cp_name, cp_ip);
 
+        // Wait for containerd to be active before running kubeadm
+        self.wait_for_containerd_ready(&cp_name).await?;
+
         // 3. Initialize Kubernetes on control-plane and get join info
         let join_info = self
             .initialize_kubernetes_cluster_with_join_info(&cp_name, &cp_ip, &options.name)
@@ -250,6 +253,8 @@ impl AppleContainerClient {
             self.wait_for_container_ready(&worker_name).await?;
             let worker_ip = self.get_container_ip(&worker_name).await?;
             info!("Worker '{}' running at IP: {}", worker_name, worker_ip);
+
+            self.wait_for_containerd_ready(&worker_name).await?;
 
             self.join_worker_node(&worker_name, &worker_ip, &join_info)
                 .await?;
@@ -310,6 +315,10 @@ impl AppleContainerClient {
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
 
+        // CAP_SYS_ADMIN is required for kubelet to bind-mount /var/lib/kubelet;
+        // ALL grants the full capability set (equivalent to Docker --privileged caps).
+        args.extend_from_slice(&["--cap-add", "ALL"]);
+
         // Note: No port mapping needed - Apple Container VM gets its own IP
         // Kubernetes API server will be accessible at <vm-ip>:6443
         // Ingress controllers will be accessible at <vm-ip>:80, <vm-ip>:443
@@ -357,6 +366,9 @@ impl AppleContainerClient {
         // Get the VM IP address
         let vm_ip = self.get_container_ip(node_name).await?;
         info!("Container '{}' running at IP: {}", node_name, vm_ip);
+
+        // Wait for containerd to be active before running kubeadm
+        self.wait_for_containerd_ready(node_name).await?;
 
         // Initialize Kubernetes cluster
         self.initialize_kubernetes_cluster(node_name, &vm_ip)
@@ -417,6 +429,8 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        args.extend_from_slice(&["--cap-add", "ALL"]);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -479,6 +493,8 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        args.extend_from_slice(&["--cap-add", "ALL"]);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -712,7 +728,7 @@ impl AppleContainerClient {
                         .get("networks")
                         .and_then(|networks| networks.as_array())
                         .and_then(|networks| networks.first())
-                        .and_then(|network| network.get("address"))
+                        .and_then(|network| network.get("ipv4Address"))
                         .and_then(|addr| addr.as_str())
                         .map(|addr| addr.split('/').next().unwrap_or(addr).to_string());
 
@@ -725,7 +741,7 @@ impl AppleContainerClient {
                                 image: labels
                                     .get("io.kina.image")
                                     .and_then(|v| v.as_str())
-                                    .unwrap_or("kindest/node:latest")
+                                    .unwrap_or("kina/node:v1.35.4")
                                     .to_string(),
                                 status: if state == "running" {
                                     ClusterStatus::Running
@@ -1234,6 +1250,53 @@ impl AppleContainerClient {
         ))
     }
 
+    /// Wait for containerd to be active inside the container before kubeadm runs.
+    /// The Apple Container VM reaches "running" status as soon as the VM boots, but systemd
+    /// services (containerd, kubelet) take additional time to start. Running kubeadm before
+    /// containerd is ready causes the kubelet health check to time out.
+    async fn wait_for_containerd_ready(&self, container_name: &str) -> Result<()> {
+        info!(
+            "Waiting for containerd to be ready in '{}'...",
+            container_name
+        );
+
+        for attempt in 1..=60 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            let mut cmd = std::process::Command::new(&self.cli_path);
+            cmd.args([
+                "exec",
+                container_name,
+                "systemctl",
+                "is-active",
+                "containerd",
+            ]);
+
+            if let Ok(output) = cmd.output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.trim() == "active" {
+                    info!(
+                        "containerd is active in '{}' after {}s",
+                        container_name,
+                        attempt * 5
+                    );
+                    return Ok(());
+                }
+                debug!(
+                    "containerd not ready yet in '{}' (attempt {}/60): {}",
+                    container_name,
+                    attempt,
+                    stdout.trim()
+                );
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "containerd failed to become active in '{}' within 5 minutes",
+            container_name
+        ))
+    }
+
     /// Get container IP address
     async fn get_container_ip(&self, container_name: &str) -> Result<String> {
         let mut cmd = std::process::Command::new(&self.cli_path);
@@ -1252,29 +1315,38 @@ impl AppleContainerClient {
         let containers: Vec<serde_json::Value> =
             serde_json::from_str(&stdout).context("Failed to parse container list JSON")?;
 
+        Self::extract_container_ip(&containers, container_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not find IP address for container '{}'",
+                container_name
+            )
+        })
+    }
+
+    /// Extract IP address for a named container from a parsed `container list` JSON array.
+    /// The Apple Container JSON format uses `ipv4Address` (with CIDR suffix, e.g. "192.168.64.5/24").
+    fn extract_container_ip(
+        containers: &[serde_json::Value],
+        container_name: &str,
+    ) -> Option<String> {
         for container in containers {
-            if let Some(id) = container
+            let id = container
                 .get("configuration")
                 .and_then(|c| c.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                if id == container_name {
-                    if let Some(networks) = container.get("networks").and_then(|v| v.as_array()) {
-                        if let Some(network) = networks.first() {
-                            if let Some(address) = network.get("address").and_then(|v| v.as_str()) {
-                                let ip = address.split('/').next().unwrap_or(address);
-                                return Ok(ip.to_string());
-                            }
-                        }
-                    }
-                }
+                .and_then(|v| v.as_str())?;
+
+            if id == container_name {
+                let address = container
+                    .get("networks")
+                    .and_then(|v| v.as_array())
+                    .and_then(|nets| nets.first())
+                    .and_then(|net| net.get("ipv4Address"))
+                    .and_then(|v| v.as_str())?;
+                let ip = address.split('/').next().unwrap_or(address);
+                return Some(ip.to_string());
             }
         }
-
-        Err(anyhow::anyhow!(
-            "Could not find IP address for container '{}'",
-            container_name
-        ))
+        None
     }
 
     /// Generate kubeadm init configuration YAML
@@ -1285,7 +1357,7 @@ impl AppleContainerClient {
         cluster_name: &str,
     ) -> String {
         format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
+            r#"apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
   advertiseAddress: "{vm_ip}"
@@ -1293,12 +1365,14 @@ localAPIEndpoint:
 nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.31.0
+kubernetesVersion: v1.35.4
 clusterName: "{cluster_name}"
 controlPlaneEndpoint: "{vm_ip}:6443"
 apiServer:
@@ -1308,26 +1382,30 @@ apiServer:
   - "localhost"
   - "127.0.0.1"
   extraArgs:
-    runtime-config: "api/all=true"
+  - name: runtime-config
+    value: "api/all=true"
 networking:
   serviceSubnet: "10.96.0.0/16"
   podSubnet: "10.244.0.0/16"
   dnsDomain: "cluster.local"
 controllerManager:
   extraArgs:
-    enable-hostpath-provisioner: "true"
+  - name: enable-hostpath-provisioner
+    value: "true"
 scheduler: {{}}
 etcd:
   local:
     dataDir: "/var/lib/etcd"
 ---
-apiVersion: kubeadm.k8s.io/v1beta3
+apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
@@ -1509,7 +1587,7 @@ clusterCIDR: "10.244.0.0/16"
 
         // Write a JoinConfiguration YAML to the worker
         let join_config = format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
+            r#"apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 discovery:
   bootstrapToken:
@@ -1520,7 +1598,8 @@ discovery:
 nodeRegistration:
   criSocket: unix:///run/containerd/containerd.sock
   kubeletExtraArgs:
-    node-ip: "{worker_ip}"
+  - name: node-ip
+    value: "{worker_ip}"
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
@@ -1858,5 +1937,73 @@ kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
         let output = "Some other output without join info";
         let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_container_ip_with_cidr() {
+        let json = serde_json::json!([{
+            "status": "running",
+            "networks": [{"ipv4Address": "192.168.64.5/24", "network": "default"}],
+            "configuration": {"id": "my-node"}
+        }]);
+        let containers = json.as_array().unwrap();
+        let ip = AppleContainerClient::extract_container_ip(containers, "my-node");
+        assert_eq!(ip, Some("192.168.64.5".to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_ip_strips_cidr_suffix() {
+        let json = serde_json::json!([{
+            "status": "running",
+            "networks": [{"ipv4Address": "10.0.0.1/16"}],
+            "configuration": {"id": "node"}
+        }]);
+        let containers = json.as_array().unwrap();
+        let ip = AppleContainerClient::extract_container_ip(containers, "node");
+        assert_eq!(ip, Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_extract_container_ip_wrong_name_returns_none() {
+        let json = serde_json::json!([{
+            "status": "running",
+            "networks": [{"ipv4Address": "192.168.64.5/24"}],
+            "configuration": {"id": "other-node"}
+        }]);
+        let containers = json.as_array().unwrap();
+        let ip = AppleContainerClient::extract_container_ip(containers, "my-node");
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_extract_container_ip_missing_field_returns_none() {
+        // Simulate old/wrong field name "address" — should return None
+        let json = serde_json::json!([{
+            "status": "running",
+            "networks": [{"address": "192.168.64.5/24"}],
+            "configuration": {"id": "my-node"}
+        }]);
+        let containers = json.as_array().unwrap();
+        let ip = AppleContainerClient::extract_container_ip(containers, "my-node");
+        assert_eq!(ip, None);
+    }
+
+    #[test]
+    fn test_extract_container_ip_selects_correct_container() {
+        let json = serde_json::json!([
+            {
+                "status": "running",
+                "networks": [{"ipv4Address": "192.168.64.2/24"}],
+                "configuration": {"id": "cluster-worker"}
+            },
+            {
+                "status": "running",
+                "networks": [{"ipv4Address": "192.168.64.3/24"}],
+                "configuration": {"id": "cluster-control-plane"}
+            }
+        ]);
+        let containers = json.as_array().unwrap();
+        let ip = AppleContainerClient::extract_container_ip(containers, "cluster-control-plane");
+        assert_eq!(ip, Some("192.168.64.3".to_string()));
     }
 }

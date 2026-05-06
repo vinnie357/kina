@@ -81,7 +81,7 @@ fn test_default_config() {
     let config = Config::default();
 
     assert_eq!(config.cluster.default_name, "kina");
-    assert_eq!(config.cluster.default_image, "kindest/node:v1.31.0");
+    assert_eq!(config.cluster.default_image, "kina/node:v1.35.4");
     assert_eq!(config.kubernetes.default_namespace, "default");
     assert_eq!(config.logging.level, "info");
 }
@@ -119,7 +119,7 @@ enable_ipv6 = false
 dns_servers = []
 
 [kubernetes]
-default_version = "v1.29.0"
+default_version = "v1.35.4"
 default_namespace = "test-namespace"
 kubeconfig_dir = "{}"
 

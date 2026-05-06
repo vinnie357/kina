@@ -507,46 +507,6 @@ fn test_install_nginx_ingress() {
 }
 
 #[test]
-fn test_install_ingress_nginx() {
-    let context = TestContext::new();
-    context.create_test_config().unwrap();
-
-    let mut cmd = context.kina_command();
-    cmd.args(&["install", "ingress-nginx"]);
-    // Tests installing ingress-nginx addon
-}
-
-#[test]
-fn test_install_cni() {
-    let context = TestContext::new();
-    context.create_test_config().unwrap();
-
-    let mut cmd = context.kina_command();
-    cmd.args(&["install", "cni"]);
-    // Tests installing CNI addon
-}
-
-#[test]
-fn test_install_coredns() {
-    let context = TestContext::new();
-    context.create_test_config().unwrap();
-
-    let mut cmd = context.kina_command();
-    cmd.args(&["install", "coredns"]);
-    // Tests installing CoreDNS addon
-}
-
-#[test]
-fn test_install_metrics_server() {
-    let context = TestContext::new();
-    context.create_test_config().unwrap();
-
-    let mut cmd = context.kina_command();
-    cmd.args(&["install", "metrics-server"]);
-    // Tests installing metrics-server addon
-}
-
-#[test]
 fn test_install_with_cluster() {
     let context = TestContext::new();
     context.create_test_config().unwrap();

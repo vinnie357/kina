@@ -3,10 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-// Re-export cluster configuration
 pub mod cluster_config;
-pub use cluster_config::ClusterConfig;
-// Note: Other imports removed as they're not currently used
 
 /// Main configuration structure for kina CLI application
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -153,7 +150,7 @@ impl Default for Config {
         Self {
             cluster: ClusterDefaults {
                 default_name: "kina".to_string(),
-                default_image: "kindest/node:v1.31.0".to_string(),
+                default_image: "kina/node:v1.35.4".to_string(),
                 default_wait_timeout: 300, // 5 minutes
                 data_dir: data_dir.clone(),
                 retain_on_failure: false,
@@ -173,7 +170,7 @@ impl Default for Config {
                 },
             },
             kubernetes: KubernetesConfig {
-                default_version: "v1.28.0".to_string(),
+                default_version: "v1.35.4".to_string(),
                 kubectl_path: None, // Will be detected automatically
                 default_namespace: "default".to_string(),
                 kubeconfig_dir: config_dir.join("kubeconfig"),

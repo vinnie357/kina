@@ -6,7 +6,7 @@ set -e
 # Uses Apple Container CLI (NOT Docker)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_TAG="kina/node:v1.31.0"
+IMAGE_TAG="kina/node:v1.35.4"
 
 echo "🏗️  Building Kina Kubernetes node image..."
 echo "📁 Working directory: $SCRIPT_DIR"
@@ -29,12 +29,12 @@ cd "$SCRIPT_DIR"
 container build -t "$IMAGE_TAG" .
 
 # Verify the image was built successfully
-if container image list | grep -q "$IMAGE_TAG"; then
+if container image list --format json | jq -e --arg tag "$IMAGE_TAG" '.[] | select(.reference == $tag)' > /dev/null 2>&1; then
     echo "✅ Successfully built image: $IMAGE_TAG"
 
     # Show image details
     echo "📋 Image details:"
-    container image inspect "$IMAGE_TAG" | jq -r '.[] | "  Size: \(.size // "unknown") | Created: \(.created // "unknown")"'
+    container image inspect "$IMAGE_TAG" | jq -r '.[] | "  Size: \(.variants[0].size // "unknown") | Created: \(.variants[0].config.created // "unknown")"'
 
     echo ""
     echo "🎉 Build complete! You can now use this image with kina:"

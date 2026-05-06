@@ -1,7 +1,7 @@
 #!/usr/bin/env nu
 
 print "Building Kina Kubernetes node image..."
-let image_tag = "kina/node:v1.31.0"
+let image_tag = "kina/node:v1.35.4"
 
 cd kina-cli/images
 

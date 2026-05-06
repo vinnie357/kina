@@ -7,7 +7,6 @@ mod cli;
 mod config;
 mod core;
 mod errors;
-mod utils;
 
 use cli::Cli;
 use config::Config;

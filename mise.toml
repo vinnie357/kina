@@ -9,9 +9,9 @@ rust = "stable"
 kubectx = "latest"
 kubens = "latest"
 cilium-cli = "latest"
-"ubi:nushell/nushell" = { version = "0.108.0", exe = "nu" }
-act = "0.2.82"
-"github:steveyegge/beads" = "0.49.0"
+"ubi:nushell/nushell" = { version = "0.112.2", exe = "nu" }
+act = "0.2.87"
+"github:gastownhall/beads" = "1.0.3"
 
 # ============================================================================
 # BUILD & DEVELOPMENT
