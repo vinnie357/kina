@@ -7,13 +7,82 @@ use super::types::{
     ClusterInfo, ClusterStatus, CreateClusterOptions, KubeadmJoinInfo, LoadImageOptions, NodeInfo,
     NodeRole,
 };
-use crate::config::Config;
+use crate::config::{CniPlugin, Config};
 
 /// Minimum supported Apple Container version (major, minor, patch).
 /// Raised to 1.0.0: config.toml replaces system property get/set/clear,
 /// structured ls/inspect output shape changed, and container cp is required
 /// for image loading.
 pub const MIN_VERSION: (u32, u32, u32) = (1, 0, 0);
+
+/// Pinned cilium-cli version (2026-05-20 release).
+/// Replacing the runtime curl-based version discovery with a pinned const ensures
+/// reproducible installs and removes the dependency on an outbound HTTP call
+/// during cluster bootstrap.
+pub const CILIUM_CLI_VERSION: &str = "v0.19.4";
+
+/// Pinned Cilium CNI version (latest 1.18.x patch, 2026-05-13).
+/// Stays on the validated 1.18 minor; treat 1.19.x as a separate upgrade.
+pub const CILIUM_VERSION: &str = "1.18.10";
+
+/// Build the shell snippet that downloads and installs the cilium-cli binary
+/// inside a node container. All values are derived from the pinned `cli_version`
+/// const — no runtime version discovery via external HTTP.
+///
+/// The snippet is ARM64-only (Apple Silicon / Apple Container VMs) and retains
+/// the sha256sum integrity check.
+pub fn build_cilium_cli_install_script(cli_version: &str) -> String {
+    format!(
+        r#"CLI_ARCH=arm64
+CILIUM_CLI_VERSION={cli_version}
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/{cli_version}/cilium-linux-arm64.tar.gz{{,.sha256sum}}
+sha256sum --check cilium-linux-arm64.tar.gz.sha256sum
+tar xzvfC cilium-linux-arm64.tar.gz /usr/local/bin
+rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
+        cli_version = cli_version,
+    )
+}
+
+/// Build the `cilium install` command string for the given Cilium version and
+/// control-plane VM IP.
+///
+/// All `--set` values are topology-correct for Apple Container clusters:
+/// - kubeadm deploys kube-proxy, so `kubeProxyReplacement=false` makes the hybrid explicit
+/// - `ipam.mode=kubernetes` uses per-node PodCIDRs from `podSubnet 10.244.0.0/16`
+///   (the cilium-cli default cluster-pool 10.0.0.0/8 mismatches the kube-proxy clusterCIDR)
+/// - `routingMode=tunnel` + `tunnelProtocol=vxlan` — outer packets use node VM IPs, vmnet-safe
+/// - `enableLocalNodeRoute=false` — kata-kernel EAFNOSUPPORT workaround,
+///   see cilium/cilium#32448 and kubernetes/minikube#18851
+/// - `nodePort.enabled=true` AND `hostPort.enabled=true` — BOTH required: without nodePort,
+///   hostPort is silently ignored, breaking nginx-ingress DaemonSet on 80/443,
+///   see cilium/cilium#31168
+/// - `k8sServiceHost` / `k8sServicePort` remove the kube-proxy bootstrap dependency for
+///   joining workers
+pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
+    format!(
+        "KUBECONFIG=/etc/kubernetes/admin.conf cilium install --version {version} \
+         --set kubeProxyReplacement=false \
+         --set ipam.mode=kubernetes \
+         --set ipv4NativeRoutingCIDR=10.244.0.0/16 \
+         --set routingMode=tunnel \
+         --set tunnelProtocol=vxlan \
+         --set ipv6.enabled=false \
+         --set enableLocalNodeRoute=false \
+         --set nodePort.enabled=true \
+         --set hostPort.enabled=true \
+         --set k8sServiceHost={cp_ip} \
+         --set k8sServicePort=6443 \
+         --set operator.replicas=1",
+        version = version,
+        cp_ip = cp_ip,
+    )
+}
+
+/// Resolve the effective CNI plugin: CLI flag takes precedence over the
+/// config file default when present.
+pub fn select_cni(cli_flag: Option<CniPlugin>, config_default: CniPlugin) -> CniPlugin {
+    cli_flag.unwrap_or(config_default)
+}
 
 /// Strategy for resolving the Apple Container CLI binary path.
 ///
@@ -328,6 +397,11 @@ impl AppleContainerClient {
         );
 
         let worker_count = options.workers.unwrap_or(0);
+        // Resolve the effective CNI plugin: CLI flag overrides config default.
+        let cni = select_cni(
+            Some(options.cni_plugin.clone()),
+            self.config.cluster.default_cni.clone(),
+        );
 
         if worker_count == 0 {
             // Single-node cluster with combined control-plane/worker roles
@@ -336,7 +410,7 @@ impl AppleContainerClient {
                 "Creating single-node cluster with combined roles: {}",
                 node_name
             );
-            self.create_single_node(&options.name, &node_name, &options.image)
+            self.create_single_node(&options.name, &node_name, &options.image, cni)
                 .await?;
         } else {
             // Multi-node cluster: 1 control-plane + N workers
@@ -360,6 +434,12 @@ impl AppleContainerClient {
     ) -> Result<()> {
         let cp_name = format!("{}-control-plane", options.name);
 
+        // Resolve the effective CNI plugin: CLI flag (options.cni_plugin) overrides config default.
+        let cni = select_cni(
+            Some(options.cni_plugin.clone()),
+            self.config.cluster.default_cni.clone(),
+        );
+
         // 1. Create control-plane container
         self.create_control_plane_node(&options.name, &cp_name, &options.image, true)
             .await?;
@@ -379,7 +459,7 @@ impl AppleContainerClient {
             .await?;
 
         // 5. Install CNI on control-plane (must be before workers join)
-        self.install_cni_plugin(&cp_name).await?;
+        self.install_cni_plugin(&cp_name, cni.clone()).await?;
 
         // 6. Create and join worker nodes sequentially
         for i in 0..worker_count {
@@ -409,12 +489,45 @@ impl AppleContainerClient {
 
             // PTP CNI requires the config file on each node (it's not a DaemonSet).
             // Cilium deploys as a DaemonSet from the control-plane and auto-rolls to workers.
-            if matches!(
-                self.config.cluster.default_cni,
-                crate::config::CniPlugin::Ptp
-            ) {
+            // Use the resolved cni (via select_cni) so --cni flag is honoured per-worker too.
+            if matches!(cni, CniPlugin::Ptp) {
                 self.install_ptp_cni(&worker_name).await?;
             }
+        }
+
+        // After all workers have joined, re-run the Cilium readiness gate and then
+        // wait for all nodes to be Ready before reporting success.
+        if matches!(cni, CniPlugin::Cilium) {
+            info!("Re-running Cilium readiness gate after all workers joined");
+            let readiness_cmd =
+                "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
+            let mut cmd = std::process::Command::new(&self.cli_path);
+            cmd.args(["exec", &cp_name, "sh", "-c", readiness_cmd]);
+            let output = cmd
+                .output()
+                .context("Failed to run post-join Cilium readiness gate")?;
+            if !output.status.success() {
+                let diag = self.collect_cilium_diagnostics(&cp_name);
+                return Err(anyhow::anyhow!(
+                    "Cilium post-join readiness gate failed: {}\nDiagnostics:\n{}",
+                    String::from_utf8_lossy(&output.stderr),
+                    diag
+                ));
+            }
+        }
+
+        // Final gate: wait for all nodes to be Ready before reporting success.
+        info!("Waiting for all nodes to be Ready");
+        let node_wait_cmd =
+            "kubectl wait --for=condition=Ready node --all --timeout=300s --kubeconfig=/etc/kubernetes/admin.conf";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", &cp_name, "sh", "-c", node_wait_cmd]);
+        let output = cmd.output().context("Failed to run node readiness gate")?;
+        if !output.status.success() {
+            warn!(
+                "Node readiness gate timed out: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Note: Do NOT remove control-plane taint in multi-node mode.
@@ -427,6 +540,54 @@ impl AppleContainerClient {
         Ok(())
     }
 
+    /// Collect Cilium diagnostics for error reporting on install/readiness failure.
+    ///
+    /// Runs three diagnostic commands inside the container and returns their output
+    /// concatenated for inclusion in the error message:
+    /// - `cilium status` (bare, no --wait — captures current state snapshot)
+    /// - `kubectl -n kube-system get pods -o wide`
+    /// - `kubectl -n kube-system logs ds/cilium --tail=100`
+    fn collect_cilium_diagnostics(&self, container_name: &str) -> String {
+        let mut diag = String::new();
+
+        // 1. Bare cilium status (no --wait) for current state snapshot.
+        let status_cmd = "KUBECONFIG=/etc/kubernetes/admin.conf cilium status 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", status_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== cilium status ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        // 2. Pod list for kube-system namespace.
+        let pods_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system get pods -o wide 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", pods_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== kubectl -n kube-system get pods -o wide ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        // 3. Cilium DaemonSet logs.
+        let logs_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system logs ds/cilium --tail=100 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", logs_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== kubectl -n kube-system logs ds/cilium --tail=100 ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        diag
+    }
+
     /// Create a single node with combined control-plane and worker roles
     /// Note: Required due to Apple Container VM communication limitation until macOS 26
     async fn create_single_node(
@@ -434,6 +595,7 @@ impl AppleContainerClient {
         cluster_name: &str,
         node_name: &str,
         image: &str,
+        cni: CniPlugin,
     ) -> Result<()> {
         info!("Creating single Kubernetes node '{}'", node_name);
 
@@ -529,8 +691,8 @@ impl AppleContainerClient {
         self.remove_control_plane_taint(node_name).await?;
 
         // Install CNI plugin (now user has kubectl access if this fails)
-        // Use default CNI from config for now - will be configurable in future updates
-        self.install_cni_plugin(node_name).await?;
+        // Use the resolved CNI plugin (CLI flag overrides config default).
+        self.install_cni_plugin(node_name, cni).await?;
 
         info!(
             "Kubernetes cluster '{}' initialized successfully",
@@ -1743,11 +1905,14 @@ failSwapOn: false
         Ok(())
     }
 
-    /// Install CNI plugin based on configuration
-    async fn install_cni_plugin(&self, container_name: &str) -> Result<()> {
-        match self.config.cluster.default_cni {
-            crate::config::CniPlugin::Ptp => self.install_ptp_cni(container_name).await,
-            crate::config::CniPlugin::Cilium => self.install_cilium_cni(container_name).await,
+    /// Install CNI plugin based on the resolved plugin selection.
+    ///
+    /// `cni` is the result of `select_cni(options.cni_plugin, config.default_cni)` and
+    /// reflects the effective choice: CLI flag overrides config default.
+    async fn install_cni_plugin(&self, container_name: &str, cni: CniPlugin) -> Result<()> {
+        match cni {
+            CniPlugin::Ptp => self.install_ptp_cni(container_name).await,
+            CniPlugin::Cilium => self.install_cilium_cni(container_name).await,
         }
     }
 
@@ -1817,50 +1982,90 @@ EOF"#,
         Ok(())
     }
 
-    /// Install Cilium CNI plugin using standard Cilium CLI
+    /// Install Cilium CNI plugin using the pinned cilium-cli and topology-correct helm values.
+    ///
+    /// Uses [`build_cilium_cli_install_script`] and [`build_cilium_install_cmd`] (pure fns)
+    /// so the exact commands are unit-testable without spawning containers.
+    ///
+    /// After `cilium install`, runs a readiness gate (`cilium status --wait --wait-duration 5m`)
+    /// with `KUBECONFIG=/etc/kubernetes/admin.conf`. On failure, captures diagnostics from
+    /// `cilium status` (bare), `kubectl -n kube-system get pods -o wide`, and
+    /// `kubectl -n kube-system logs ds/cilium --tail=100` and includes them in the error.
     async fn install_cilium_cni(&self, container_name: &str) -> Result<()> {
-        info!("Installing Cilium CNI plugin using standard Cilium CLI");
+        info!("Installing Cilium CNI plugin (pinned versions, topology-correct values)");
 
-        // Set up environment (use the kubeconfig that kubeadm created)
-        let kubeconfig_env = "export KUBECONFIG=/etc/kubernetes/admin.conf";
-
-        // First install the Cilium CLI (running as root in container, no sudo needed)
-        // Use arm64 architecture for Apple Silicon compatibility
-        let install_cli_cmd = r#"
-CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
-CLI_ARCH=arm64
-curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
-sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
-tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
-rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
-"#;
+        // Step 1: Install the pinned cilium-cli binary inside the container.
+        // build_cilium_cli_install_script uses the pinned CILIUM_CLI_VERSION const —
+        // no runtime version-discovery curl.
+        let install_cli_cmd = build_cilium_cli_install_script(CILIUM_CLI_VERSION);
 
         let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args(["exec", container_name, "sh", "-c", install_cli_cmd]);
+        cmd.args(["exec", container_name, "sh", "-c", &install_cli_cmd]);
 
         let output = cmd.output().context("Failed to install Cilium CLI")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to install Cilium CLI: {}", stderr));
+            return Err(anyhow::anyhow!(
+                "Failed to install pinned cilium-cli {}: {}",
+                CILIUM_CLI_VERSION,
+                stderr
+            ));
         }
 
-        // Now install Cilium using the standard cilium install command with minimal Apple Container fix
-        // Disable local node route management to fix: "address family not supported by protocol"
-        let cilium_install_cmd = format!(
-            "{} && cilium install --version 1.18.2 --set enableLocalNodeRoute=false",
-            kubeconfig_env
-        );
+        info!("cilium-cli {} installed successfully", CILIUM_CLI_VERSION);
+
+        // Step 2: We need the control-plane VM IP to set k8sServiceHost.
+        // The container_name is the control-plane node; fetch its IP.
+        let cp_ip = self.get_container_ip(container_name).await?;
+
+        // Step 3: Install Cilium with topology-correct --set values.
+        // build_cilium_install_cmd documents every flag rationale in its doc-comment.
+        let cilium_install_cmd = build_cilium_install_cmd(CILIUM_VERSION, &cp_ip);
 
         let mut cmd = std::process::Command::new(&self.cli_path);
         cmd.args(["exec", container_name, "sh", "-c", &cilium_install_cmd]);
 
-        let output = cmd.output().context("Failed to install Cilium")?;
+        let output = cmd.output().context("Failed to run cilium install")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to install Cilium: {}", stderr));
+            let diag = self.collect_cilium_diagnostics(container_name);
+            return Err(anyhow::anyhow!(
+                "Failed to install Cilium {}: {}\nDiagnostics:\n{}",
+                CILIUM_VERSION,
+                stderr,
+                diag
+            ));
         }
 
-        info!("Cilium CNI plugin installed successfully using standard installation");
+        info!(
+            "Cilium {} install command completed; running readiness gate",
+            CILIUM_VERSION
+        );
+
+        // Step 4: Readiness gate — wait until Cilium reports healthy.
+        // Bounded to 5 minutes; fail fast with diagnostics if exceeded.
+        let readiness_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", readiness_cmd]);
+
+        let output = cmd
+            .output()
+            .context("Failed to run Cilium readiness gate")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let diag = self.collect_cilium_diagnostics(container_name);
+            return Err(anyhow::anyhow!(
+                "Cilium readiness gate failed (cilium status --wait --wait-duration 5m): {}\nDiagnostics:\n{}",
+                stderr,
+                diag
+            ));
+        }
+
+        info!(
+            "Cilium CNI plugin installed and ready (version {})",
+            CILIUM_VERSION
+        );
         Ok(())
     }
 
