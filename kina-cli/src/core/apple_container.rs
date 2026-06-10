@@ -9,8 +9,232 @@ use super::types::{
 };
 use crate::config::Config;
 
-/// Minimum supported Apple Container version (major, minor, patch)
-const MIN_VERSION: (u32, u32, u32) = (0, 5, 0);
+/// Minimum supported Apple Container version (major, minor, patch).
+/// Raised to 1.0.0: config.toml replaces system property get/set/clear,
+/// structured ls/inspect output shape changed, and container cp is required
+/// for image loading.
+pub const MIN_VERSION: (u32, u32, u32) = (1, 0, 0);
+
+/// Strategy for resolving the Apple Container CLI binary path.
+///
+/// `Which(name)` asks the shell PATH resolver (`which <name>`) — preferred
+/// because it respects the user's PATH ordering (e.g., brew-managed 1.0.0
+/// binary at /opt/homebrew/bin/container before a stale package-installer
+/// binary at /usr/local/bin/container).
+///
+/// `Hardcoded(path)` tries a known absolute path as a fallback for systems
+/// where the binary is not on PATH.
+pub enum CliPathStrategy {
+    /// Resolve via PATH (e.g., `which container`). The inner String is the
+    /// binary name to pass to `which`.
+    Which(String),
+    /// Try this absolute path directly.
+    Hardcoded(String),
+}
+
+/// Returns the ordered list of strategies detect_cli_path() uses to locate
+/// the Apple Container CLI binary.
+///
+/// ORDER CONTRACT: all Which(_) entries come before any Hardcoded(_) entry.
+/// This ensures brew/PATH-managed binaries (including the 1.0.0 release) are
+/// found before any stale package-installer binary that may still reside at
+/// /usr/local/bin/container on upgraded hosts.
+pub fn cli_path_candidates() -> Vec<CliPathStrategy> {
+    vec![
+        // PATH resolution first — respects the user's PATH, so brew/nix/mise-managed
+        // 1.0.0 binaries win over any stale /usr/local/bin/container left by older
+        // package installers.
+        CliPathStrategy::Which("container".to_string()),
+        CliPathStrategy::Which("apple-container".to_string()),
+        // Hardcoded fallbacks — tried only when PATH resolution finds nothing.
+        CliPathStrategy::Hardcoded("/opt/homebrew/bin/container".to_string()),
+        CliPathStrategy::Hardcoded("/opt/homebrew/bin/apple-container".to_string()),
+        CliPathStrategy::Hardcoded("/usr/local/bin/container".to_string()),
+        CliPathStrategy::Hardcoded("/usr/local/bin/apple-container".to_string()),
+        CliPathStrategy::Hardcoded(
+            "/System/Library/PrivateFrameworks/ContainerManager.framework/Versions/A/Resources/apple-container".to_string(),
+        ),
+    ]
+}
+
+/// Parse the version string from Apple Container CLI output.
+///
+/// Expects the format `container CLI version <version> (build: ..., commit: ...)`.
+/// The token after `"CLI version "` must start with a digit (semver major).
+/// Returns `Ok(version_string)` on success, `Err` if the expected token is absent
+/// or does not start with a digit.
+pub fn parse_version_output(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    // Require the specific "CLI version " prefix used by Apple Container so that
+    // arbitrary strings containing the word "version" do not accidentally parse.
+    if let Some(pos) = trimmed.find("CLI version ") {
+        let after_version = &trimmed[pos + "CLI version ".len()..];
+        let version = after_version
+            .split_whitespace()
+            .next()
+            .unwrap_or(after_version);
+        if version.is_empty() || !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            return Err(anyhow::anyhow!(
+                "Could not parse Apple Container CLI version from output: {}",
+                trimmed
+            ));
+        }
+        debug!("Detected Apple Container CLI version: {}", version);
+        return Ok(version.to_string());
+    }
+    Err(anyhow::anyhow!(
+        "Could not parse Apple Container CLI version from output: {}",
+        trimmed
+    ))
+}
+
+/// Validate that `version` meets MIN_VERSION (1.0.0).
+///
+/// Returns `Err` with migration guidance if the version is too old;
+/// returns `Ok(())` if the version is at or above the minimum.
+pub fn validate_version(version: &str) -> Result<()> {
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() < 2 {
+        return Err(anyhow::anyhow!(
+            "Invalid Apple Container CLI version format: {}",
+            version
+        ));
+    }
+
+    let major = parts[0]
+        .parse::<u32>()
+        .context("Invalid major version number")?;
+    let minor = parts[1]
+        .parse::<u32>()
+        .context("Invalid minor version number")?;
+    let patch = parts
+        .get(2)
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let (min_major, min_minor, min_patch) = MIN_VERSION;
+    let meets_minimum = (major, minor, patch) >= (min_major, min_minor, min_patch);
+
+    if !meets_minimum {
+        return Err(anyhow::anyhow!(
+            "Apple Container CLI version {} is not supported. \
+             Minimum required version is {}.{}.{}.\n\
+             Migration to 1.0.0 requires these changes:\n\
+             - config.toml replaces 'container system property get/set/clear' \
+               (UserDefaults-backed properties removed; write values to \
+               ~/.config/container/config.toml and restart the service)\n\
+             - structured 'container ls/inspect' output shape changed \
+               (.status is now an object; networks moved to .status.networks; \
+               ipv4Address replaces address)\n\
+             - default Linux capability set (cap) reduced since 0.12.0; \
+               use --cap-add to restore capabilities needed by workloads\n\
+             Please upgrade Apple Container to 1.0.0 or later to continue.\n\
+             See: https://github.com/apple/container/releases",
+            version,
+            min_major,
+            min_minor,
+            min_patch
+        ));
+    }
+
+    info!(
+        "Apple Container CLI version {} meets minimum requirement ({}.{}.{})",
+        version, min_major, min_minor, min_patch
+    );
+    Ok(())
+}
+
+/// A container entry parsed from `container list --format json` (1.0.0 shape).
+#[derive(Debug)]
+pub struct ParsedContainer {
+    /// Top-level `id` field (same as `configuration.id`).
+    pub id: String,
+    /// Labels from `configuration.labels`.
+    pub labels: HashMap<String, String>,
+    /// State string from `status.state` (e.g., `"running"`, `"stopped"`).
+    pub state: String,
+    /// Bare IPv4 address from `status.networks[0].ipv4Address` with the CIDR
+    /// suffix stripped (e.g., `"192.168.65.2"` not `"192.168.65.2/24"`).
+    /// `None` when the container has no network attachment.
+    pub ipv4: Option<String>,
+}
+
+/// Parse the JSON output of `container list --format json` using the 1.0.0 shape.
+///
+/// Returns `Ok(vec![])` for empty or whitespace-only input.
+/// Returns `Err` for malformed JSON or if the top-level value is not an array.
+pub fn parse_container_list(json: &str) -> Result<Vec<ParsedContainer>> {
+    if json.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(json).context("Failed to parse container list JSON")?;
+
+    let array = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Expected a JSON array at top level"))?;
+
+    let mut result = Vec::with_capacity(array.len());
+
+    for elem in array {
+        // Top-level "id"
+        let id = elem
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // configuration.labels -> HashMap
+        let labels: HashMap<String, String> = elem
+            .get("configuration")
+            .and_then(|c| c.get("labels"))
+            .and_then(|l| l.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // status.state
+        let state = elem
+            .get("status")
+            .and_then(|s| s.get("state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // status.networks[0].ipv4Address with CIDR stripped
+        let ipv4 = elem
+            .get("status")
+            .and_then(|s| s.get("networks"))
+            .and_then(|n| n.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|net| net.get("ipv4Address"))
+            .and_then(|v| v.as_str())
+            .map(|cidr| cidr.split('/').next().unwrap_or(cidr).to_string());
+
+        result.push(ParsedContainer {
+            id,
+            labels,
+            state,
+            ipv4,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Returns the capability arguments required for Kubernetes node containers.
+///
+/// Apple Container has no privileged-mode flag. Since 0.12.0 the default
+/// capability set is reduced to 14 Docker-style caps — insufficient for
+/// systemd, kubeadm, kubelet, containerd, and Cilium eBPF. Use `--cap-add ALL`
+/// (equivalent to KIND's privileged mode) so the node can run the full k8s stack.
+pub fn node_cap_args() -> Vec<&'static str> {
+    vec!["--cap-add", "ALL"]
+}
 
 /// Client for interacting with Apple Container
 pub struct AppleContainerClient {
@@ -30,7 +254,7 @@ impl AppleContainerClient {
         };
 
         let container_version = Self::detect_version(&cli_path)?;
-        Self::validate_version(&container_version)?;
+        validate_version(&container_version)?;
 
         Ok(Self {
             config: config.clone(),
@@ -59,103 +283,32 @@ impl AppleContainerClient {
             ));
         }
 
-        // Parse version from output like: "container CLI version 0.5.0 (build: release, commit: 48230f3)"
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let version_str = stdout.trim();
-
-        // Look for the version number after "version "
-        if let Some(pos) = version_str.find("version ") {
-            let after_version = &version_str[pos + "version ".len()..];
-            // Take everything up to the next space or end of string
-            let version = after_version
-                .split_whitespace()
-                .next()
-                .unwrap_or(after_version);
-            debug!("Detected Apple Container CLI version: {}", version);
-            return Ok(version.to_string());
-        }
-
-        Err(anyhow::anyhow!(
-            "Could not parse Apple Container CLI version from output: {}",
-            version_str
-        ))
+        parse_version_output(stdout.trim())
     }
 
-    /// Validate that the detected version meets the minimum requirement
-    fn validate_version(version: &str) -> Result<()> {
-        let parts: Vec<&str> = version.split('.').collect();
-        if parts.len() < 2 {
-            return Err(anyhow::anyhow!(
-                "Invalid Apple Container CLI version format: {}",
-                version
-            ));
-        }
-
-        let major = parts[0]
-            .parse::<u32>()
-            .context("Invalid major version number")?;
-        let minor = parts[1]
-            .parse::<u32>()
-            .context("Invalid minor version number")?;
-        let patch = parts
-            .get(2)
-            .and_then(|p| p.parse::<u32>().ok())
-            .unwrap_or(0);
-
-        let (min_major, min_minor, min_patch) = MIN_VERSION;
-
-        let meets_minimum = (major, minor, patch) >= (min_major, min_minor, min_patch);
-
-        if !meets_minimum {
-            return Err(anyhow::anyhow!(
-                "Apple Container CLI version {} is not supported. \
-                 Minimum required version is {}.{}.{}.\n\
-                 Breaking changes in 0.5.0:\n\
-                 - 'container images' replaced by 'container image'\n\
-                 - Keychain ID changed to 'com.apple.container.registry'\n\
-                 - System properties consolidated to 'container system property'\n\
-                 Please upgrade Apple Container to continue.",
-                version,
-                min_major,
-                min_minor,
-                min_patch
-            ));
-        }
-
-        info!(
-            "Apple Container CLI version {} meets minimum requirement ({}.{}.{})",
-            version, min_major, min_minor, min_patch
-        );
-        Ok(())
-    }
-
-    /// Detect Apple Container CLI path
+    /// Detect Apple Container CLI path.
+    ///
+    /// Delegates to `cli_path_candidates()` to enforce the PATH-first ordering
+    /// contract: brew/nix/mise-managed binaries resolve before any stale
+    /// package-installer binary that may remain at /usr/local/bin/container.
     fn detect_cli_path() -> Result<String> {
-        // Check specific paths first to avoid conflicts with system commands
-        let specific_paths = [
-            "/usr/local/bin/container",
-            "/opt/homebrew/bin/container",
-            "/usr/local/bin/apple-container",
-            "/opt/homebrew/bin/apple-container",
-            "/System/Library/PrivateFrameworks/ContainerManager.framework/Versions/A/Resources/apple-container",
-        ];
-
-        for path in &specific_paths {
-            if std::path::Path::new(path).exists() {
-                info!("Found Apple Container CLI at: {}", path);
-                return Ok(path.to_string());
-            }
-        }
-
-        // Only search PATH for container names, avoiding system commands like 'ac'
-        let possible_names = ["container", "apple-container"];
-
-        for name in &possible_names {
-            if let Ok(output) = std::process::Command::new("which").arg(name).output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        info!("Found Apple Container CLI at: {}", path);
+        for strategy in cli_path_candidates() {
+            match strategy {
+                CliPathStrategy::Which(name) => {
+                    if let Ok(output) = std::process::Command::new("which").arg(&name).output() {
+                        if output.status.success() {
+                            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if !path.is_empty() {
+                                info!("Found Apple Container CLI via PATH: {}", path);
+                                return Ok(path);
+                            }
+                        }
+                    }
+                }
+                CliPathStrategy::Hardcoded(path) => {
+                    if std::path::Path::new(&path).exists() {
+                        info!("Found Apple Container CLI at hardcoded path: {}", path);
                         return Ok(path);
                     }
                 }
@@ -310,6 +463,11 @@ impl AppleContainerClient {
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
 
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
+
         // Note: No port mapping needed - Apple Container VM gets its own IP
         // Kubernetes API server will be accessible at <vm-ip>:6443
         // Ingress controllers will be accessible at <vm-ip>:80, <vm-ip>:443
@@ -418,6 +576,11 @@ impl AppleContainerClient {
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
 
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
+
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
         args.extend_from_slice(&[
@@ -479,6 +642,11 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -674,87 +842,65 @@ impl AppleContainerClient {
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!("Apple Container ps output: {}", stdout);
 
-        // Parse JSON output to find kina clusters
-        let containers: Vec<serde_json::Value> = if stdout.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(&stdout).context("Failed to parse Apple Container JSON output")?
-        };
+        // Parse JSON output using the 1.0.0 shape helper
+        let parsed =
+            parse_container_list(&stdout).context("Failed to parse Apple Container JSON output")?;
 
-        let mut clusters = HashMap::new();
+        let mut clusters: HashMap<String, ClusterInfo> = HashMap::new();
 
-        for container in containers {
-            // Check if this container has kina cluster labels
-            if let Some(labels) = container
-                .get("configuration")
-                .and_then(|c| c.get("labels"))
-                .and_then(|l| l.as_object())
-            {
-                if let Some(cluster_name) = labels.get("io.kina.cluster").and_then(|v| v.as_str()) {
-                    let role = labels
-                        .get("io.kina.role")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+        for container in parsed {
+            // Only include containers managed by kina (must have io.kina.cluster label)
+            if let Some(cluster_name) = container.labels.get("io.kina.cluster") {
+                let role = container
+                    .labels
+                    .get("io.kina.role")
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
 
-                    let container_name = container
-                        .get("configuration")
-                        .and_then(|c| c.get("id"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                let image = container
+                    .labels
+                    .get("io.kina.image")
+                    .map(|s| s.as_str())
+                    .unwrap_or("kindest/node:latest");
 
-                    let state = container
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                let state = &container.state;
+                let ip_address = container.ipv4.clone();
+                let container_name = container.id.clone();
 
-                    // Extract IP address from container networks
-                    let ip_address = container
-                        .get("networks")
-                        .and_then(|networks| networks.as_array())
-                        .and_then(|networks| networks.first())
-                        .and_then(|network| network.get("address"))
-                        .and_then(|addr| addr.as_str())
-                        .map(|addr| addr.split('/').next().unwrap_or(addr).to_string());
+                // Group containers by cluster name
+                let cluster_info =
+                    clusters
+                        .entry(cluster_name.clone())
+                        .or_insert_with(|| ClusterInfo {
+                            name: cluster_name.clone(),
+                            image: image.to_string(),
+                            status: if state == "running" {
+                                ClusterStatus::Running
+                            } else {
+                                ClusterStatus::Stopped
+                            },
+                            nodes: Vec::new(),
+                            created: "unknown".to_string(),
+                            kubeconfig_path: None,
+                        });
 
-                    // Group containers by cluster name
-                    let cluster_info =
-                        clusters
-                            .entry(cluster_name.to_string())
-                            .or_insert_with(|| ClusterInfo {
-                                name: cluster_name.to_string(),
-                                image: labels
-                                    .get("io.kina.image")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("kindest/node:latest")
-                                    .to_string(),
-                                status: if state == "running" {
-                                    ClusterStatus::Running
-                                } else {
-                                    ClusterStatus::Stopped
-                                },
-                                nodes: Vec::new(),
-                                created: "unknown".to_string(), // Container format doesn't expose creation time easily
-                                kubeconfig_path: None,
-                            });
+                // Add node information
+                cluster_info.nodes.push(NodeInfo {
+                    name: container_name.clone(),
+                    role: if role.contains("control-plane") {
+                        NodeRole::ControlPlane
+                    } else {
+                        NodeRole::Worker
+                    },
+                    status: state.clone(),
+                    version: "unknown".to_string(),
+                    container_id: Some(container_name),
+                    ip_address,
+                });
 
-                    // Add node information
-                    cluster_info.nodes.push(NodeInfo {
-                        name: container_name.to_string(),
-                        role: if role.contains("control-plane") {
-                            NodeRole::ControlPlane
-                        } else {
-                            NodeRole::Worker
-                        },
-                        status: state.to_string(),
-                        version: "unknown".to_string(),
-                        container_id: Some(container_name.to_string()),
-                        ip_address,
-                    });
-
-                    // Update cluster status based on all containers
-                    if state != "running" {
-                        cluster_info.status = ClusterStatus::Stopped;
-                    }
+                // Update cluster status based on all containers
+                if state != "running" {
+                    cluster_info.status = ClusterStatus::Stopped;
                 }
             }
         }
@@ -1195,27 +1341,14 @@ impl AppleContainerClient {
             if let Ok(output) = cmd.output() {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    if let Ok(containers) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout)
-                    {
+                    if let Ok(containers) = parse_container_list(&stdout) {
                         for container in containers {
-                            if let Some(id) = container
-                                .get("configuration")
-                                .and_then(|c| c.get("id"))
-                                .and_then(|v| v.as_str())
-                            {
-                                if id == container_name {
-                                    if let Some(status) =
-                                        container.get("status").and_then(|v| v.as_str())
-                                    {
-                                        if status == "running" {
-                                            debug!(
-                                                "Container '{}' is running after {} attempts",
-                                                container_name, attempt
-                                            );
-                                            return Ok(());
-                                        }
-                                    }
-                                }
+                            if container.id == container_name && container.state == "running" {
+                                debug!(
+                                    "Container '{}' is running after {} attempts",
+                                    container_name, attempt
+                                );
+                                return Ok(());
                             }
                         }
                     }
@@ -1249,24 +1382,13 @@ impl AppleContainerClient {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let containers: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).context("Failed to parse container list JSON")?;
+        let containers =
+            parse_container_list(&stdout).context("Failed to parse container list JSON")?;
 
         for container in containers {
-            if let Some(id) = container
-                .get("configuration")
-                .and_then(|c| c.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                if id == container_name {
-                    if let Some(networks) = container.get("networks").and_then(|v| v.as_array()) {
-                        if let Some(network) = networks.first() {
-                            if let Some(address) = network.get("address").and_then(|v| v.as_str()) {
-                                let ip = address.split('/').next().unwrap_or(address);
-                                return Ok(ip.to_string());
-                            }
-                        }
-                    }
+            if container.id == container_name {
+                if let Some(ip) = container.ipv4 {
+                    return Ok(ip);
                 }
             }
         }
