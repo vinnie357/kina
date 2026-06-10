@@ -53,6 +53,16 @@ rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
 /// - `routingMode=tunnel` + `tunnelProtocol=vxlan` — outer packets use node VM IPs, vmnet-safe
 /// - `enableLocalNodeRoute=false` — kata-kernel EAFNOSUPPORT workaround,
 ///   see cilium/cilium#32448 and kubernetes/minikube#18851
+/// - `l7Proxy=false` — disables Cilium's L7 proxy (Envoy-based). The kata-kernel used by
+///   Apple Container VMs has `CONFIG_IP_ADVANCED_ROUTER` / `CONFIG_IP_MULTIPLE_TABLES` unset,
+///   which means IPv4 policy routing (`ip rule`) is absent. Cilium's L7 proxy init path
+///   calls `NodeEnsureLocalRoutingRule()` (daemon/cmd/daemon.go) unconditionally when
+///   `EnableL7Proxy=true`; that function issues `ip rule replace … table local` with AF_INET
+///   which the kernel rejects with EAFNOSUPPORT, crashing the cilium-agent before it starts.
+///   Additionally, the transparent DNS proxy (`dnsproxy-enable-transparent-mode=true`) requires
+///   the `xt_socket` kernel module (for `iptables --transparent`), also absent in the kata-kernel.
+///   Disabling L7 proxy skips both kernel-unsupported code paths. Network policy enforcement
+///   (L3/L4) and pod-to-pod connectivity are unaffected.
 /// - `nodePort.enabled=true` AND `hostPort.enabled=true` — BOTH required: without nodePort,
 ///   hostPort is silently ignored, breaking nginx-ingress DaemonSet on 80/443,
 ///   see cilium/cilium#31168
@@ -68,6 +78,7 @@ pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
          --set tunnelProtocol=vxlan \
          --set ipv6.enabled=false \
          --set enableLocalNodeRoute=false \
+         --set l7Proxy=false \
          --set nodePort.enabled=true \
          --set hostPort.enabled=true \
          --set k8sServiceHost={cp_ip} \
