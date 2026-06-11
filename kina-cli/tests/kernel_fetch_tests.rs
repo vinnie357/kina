@@ -600,8 +600,8 @@ fn sha256_of_bytes(bytes: &[u8]) -> String {
 const TEST_OK_PAYLOAD: &[u8] = b"KINA_TEST_KERNEL_BYTES_OK\n";
 /// sha256 of TEST_OK_PAYLOAD (lowercase hex, 64 chars).
 /// Pre-computed: printf 'KINA_TEST_KERNEL_BYTES_OK\n' | sha256sum
-/// = 59b024f16d2e028ccd6e8d9cee35bf98da5c5fa19ca4c4440b2e06fdf8e55ef2
-const TEST_OK_SHA256: &str = "59b024f16d2e028ccd6e8d9cee35bf98da5c5fa19ca4c4440b2e06fdf8e55ef2";
+/// = 11cb9369f2b054168ad224f97feefa234aa530097d3e6764ee2bf3576e4e9ec3
+const TEST_OK_SHA256: &str = "11cb9369f2b054168ad224f97feefa234aa530097d3e6764ee2bf3576e4e9ec3";
 
 /// F1 — install_kernel success: atomic temp-then-rename, returns cache file path
 ///
