@@ -116,7 +116,7 @@ run = "nu scripts/test-cluster.nu"
 timeout = "10m"
 
 [tasks."test:cluster:multi"]
-description = "Create multi-node integration test cluster (1 control-plane + 2 workers)"
+description = "Create multi-node integration test cluster (1 control-plane + 2 workers). Env: KINA_TEST_CNI (ptp|cilium, default ptp), KINA_TEST_KERNEL_PATH (path to custom kernel, optional)"
 run = "nu scripts/test-cluster-multi.nu"
 timeout = "15m"
 

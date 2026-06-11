@@ -14,9 +14,17 @@ let timestamp = (date now | format date "%Y%m%d-%H%M%S")
 let cluster_name = $"demo-multi-($timestamp)"
 let worker_count = 2
 
+# CNI and kernel-path from env (AC5: KINA_TEST_CNI / KINA_TEST_KERNEL_PATH)
+let test_cni = ($env | get -i KINA_TEST_CNI | default "ptp")
+let test_kernel_path = ($env | get -i KINA_TEST_KERNEL_PATH | default "")
+
 banner "KINA MULTI-NODE INTEGRATION TEST"
 print $"(ansi cyan)Cluster Name:(ansi reset) ($cluster_name)"
 print $"(ansi cyan)Topology:(ansi reset) 1 control-plane + ($worker_count) workers"
+print $"(ansi cyan)CNI:(ansi reset) ($test_cni)"
+if not ($test_kernel_path | is-empty) {
+    print $"(ansi cyan)Kernel Path:(ansi reset) ($test_kernel_path)"
+}
 print ""
 
 if not ("Cargo.toml" | path exists) {
@@ -34,7 +42,14 @@ log "Build complete"
 
 # Step 2: Create multi-node cluster
 log $"Step 2: Creating multi-node cluster '($cluster_name)' with ($worker_count) workers..."
-let create = (do { ^cargo run --release --manifest-path kina-cli/Cargo.toml -- create $cluster_name --workers $worker_count --wait 120 } | complete)
+# Build create args; pass --cni and --kernel-path from env (KINA_TEST_CNI / KINA_TEST_KERNEL_PATH)
+let base_create_args = [create $cluster_name --workers $worker_count --wait 120 --cni $test_cni]
+let create_args = if not ($test_kernel_path | is-empty) {
+    $base_create_args | append [--kernel-path $test_kernel_path]
+} else {
+    $base_create_args
+}
+let create = (do { ^cargo run --release --manifest-path kina-cli/Cargo.toml -- ...$create_args } | complete)
 print $create.stdout
 if $create.exit_code != 0 {
     print $create.stderr

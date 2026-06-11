@@ -115,6 +115,15 @@ kubectl version --client
 
 ## Quick Start
 
+```bash
+kina create kina-test --workers 2 --cni cilium --kernel-path <path>
+kina install nginx-ingress --cluster kina-test
+kina install demo-app --cluster kina-test
+kina verify kina-test
+```
+
+> `--kernel-path` is required until `kina-8` lands auto-download.
+
 ### Create Your First Cluster
 
 ```bash
@@ -135,11 +144,17 @@ kubectl get nodes
 kina create demo --cni cilium --wait 300
 ```
 
-### Install Nginx Ingress Controller
+### Install Nginx Ingress Controller and Demo App
 
 ```bash
-# Install nginx-ingress to your cluster
+# Install nginx-ingress (manifests embedded in binary — works from any directory)
 kina install nginx-ingress --cluster my-cluster
+
+# Install demo application
+kina install demo-app --cluster my-cluster
+
+# Verify the cluster end-to-end
+kina verify my-cluster
 ```
 
 ### Check Cluster Status
