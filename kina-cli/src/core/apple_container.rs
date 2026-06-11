@@ -762,6 +762,14 @@ impl AppleContainerClient {
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
 
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack (etcd + apiserver + KCM + scheduler + Cilium agent +
+        // cilium-operator + Envoy DaemonSet + Hubble). OOM kills cascade into
+        // control-plane component crashes that look like TLS / leader-election failures.
+        // 4 GB is the minimum for a stable full-eBPF Cilium cluster.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+
         // Inject custom kernel args when a kernel path is configured.
         // node_kernel_args returns ["--kernel", "<path>"] or [] for stock kernel.
         let kernel_args_owned = node_kernel_args(kernel_path);
@@ -883,6 +891,11 @@ impl AppleContainerClient {
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
 
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack. See single-node creation comment for rationale.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+
         // Inject custom kernel args when a kernel path is configured.
         let cp_kernel_args_owned = node_kernel_args(kernel_path);
         let cp_kernel_args_refs: Vec<&str> =
@@ -956,6 +969,11 @@ impl AppleContainerClient {
         // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
+
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack. See single-node creation comment for rationale.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
 
         // Inject custom kernel args when a kernel path is configured.
         let wk_kernel_args_owned = node_kernel_args(kernel_path);
@@ -2236,8 +2254,57 @@ EOF"#,
             CILIUM_VERSION
         );
 
-        // Step 4: Readiness gate — wait until Cilium reports healthy.
+        // Step 4a: Approve pending kubelet-serving CSRs before the readiness gate.
+        //
+        // kubeadm sets `serverTLSBootstrap: true` in the kubelet config, which means
+        // kubelet generates a serving certificate via a CertificateSigningRequest rather
+        // than using a self-signed cert. The CSR is pending until explicitly approved.
+        // Until approved, any API path that goes through the kubelet serving port (:10250)
+        // — including `cilium status --wait` probes that exec into pods via the kubelet API
+        // — fails with "remote error: tls: internal error".
+        //
+        // cilium-operator repeatedly loses leader election when those TLS handshakes fail,
+        // producing a 5-minute backoff cascade that outlasts the readiness gate duration.
+        //
+        // Fix: approve any pending kubelet CSRs right after `cilium install`, before the
+        // readiness gate. A 15-second wait gives kubelet time to submit its CSR after
+        // the CNI is initialized (Cilium sets up the pod network, kubelet comes up healthy,
+        // then submits). Errors are warned but not fatal — if no CSRs exist yet, the
+        // approve step is a no-op and the readiness gate will surface real failures.
+        info!("Approving pending kubelet-serving CSRs before readiness gate");
+        let csr_approve_cmd = "\
+            sleep 15 && \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr -o name 2>/dev/null | \
+            grep 'csr.node.eks.amazonaws.com\\|certificatesigningrequest' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr --no-headers 2>/dev/null | \
+            awk '/Pending/{print $1}' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", csr_approve_cmd]);
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                info!("Kubelet CSR approval step completed");
+            }
+            Ok(out) => {
+                warn!(
+                    "Kubelet CSR approval step returned non-zero (may be no CSRs yet): {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                warn!("Failed to run kubelet CSR approval step (non-fatal): {}", e);
+            }
+        }
+
+        // Step 4b: Readiness gate — wait until Cilium reports healthy.
         // Bounded to 5 minutes; fail fast with diagnostics if exceeded.
+        // CSRs are now approved so cilium-operator kubelet API calls can complete TLS.
         let readiness_cmd =
             "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
         let mut cmd = std::process::Command::new(&self.cli_path);
