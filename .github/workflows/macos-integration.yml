@@ -1,9 +1,12 @@
 name: macOS 26 Integration (Apple Container 1.0.0)
 
-# Cost guard: manual dispatch only.
+# Cost guard: push to ci/macos26-integration branch only + manual dispatch.
 # PR-label trigger can be added once nested-virt viability is confirmed.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/macos26-integration
 
 jobs:
   macos26-integration:
