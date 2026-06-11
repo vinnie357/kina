@@ -192,16 +192,6 @@ pub enum AddonType {
     /// NGINX Ingress Controller (nginx.org)
     #[value(name = "nginx-ingress")]
     NginxIngress,
-    /// Ingress NGINX Controller (kubernetes community)
-    #[value(name = "ingress-nginx")]
-    IngressNginx,
-    /// CNI plugins
-    Cni,
-    /// CoreDNS
-    Coredns,
-    /// Metrics server
-    #[value(name = "metrics-server")]
-    MetricsServer,
     /// Demo application (kina-demo-app with ingress)
     #[value(name = "demo-app")]
     DemoApp,
@@ -586,18 +576,6 @@ impl InstallArgs {
             AddonType::NginxIngress => {
                 self.install_nginx_ingress(&cluster_manager).await?;
             }
-            AddonType::IngressNginx => {
-                self.install_ingress_nginx(&cluster_manager).await?;
-            }
-            AddonType::Cni => {
-                self.install_cni(&cluster_manager).await?;
-            }
-            AddonType::Coredns => {
-                self.install_coredns(&cluster_manager).await?;
-            }
-            AddonType::MetricsServer => {
-                self.install_metrics_server(&cluster_manager).await?;
-            }
             AddonType::DemoApp => {
                 self.install_demo_app(&cluster_manager).await?;
             }
@@ -720,26 +698,6 @@ impl InstallArgs {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         Ok(())
-    }
-
-    async fn install_ingress_nginx(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "ingress-nginx installation not yet implemented. Use nginx-ingress instead."
-        ))
-    }
-
-    async fn install_cni(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!("CNI installation not yet implemented"))
-    }
-
-    async fn install_coredns(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!("CoreDNS installation not yet implemented"))
-    }
-
-    async fn install_metrics_server(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Metrics server installation not yet implemented"
-        ))
     }
 
     async fn install_demo_app(&self, _cluster_manager: &ClusterManager) -> Result<()> {

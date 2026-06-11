@@ -5,8 +5,6 @@ use tracing::{debug, info, warn};
 
 // Re-export cluster configuration
 pub mod cluster_config;
-pub use cluster_config::ClusterConfig;
-// Note: Other imports removed as they're not currently used
 
 /// Pinned kernel distribution configuration.
 ///
