@@ -8,7 +8,7 @@
 /// Source-grep guard tests (T20, T23, T24) open the source file via CARGO_MANIFEST_DIR.
 use kina_cli::core::apple_container::{
     cli_path_candidates, node_cap_args, parse_container_list, parse_version_output,
-    validate_version, CliPathStrategy, ParsedContainer, MIN_VERSION,
+    validate_version, CliPathStrategy, MIN_VERSION,
 };
 #[allow(unused_imports)]
 use std::collections::HashMap;
