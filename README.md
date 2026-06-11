@@ -50,8 +50,8 @@ brew install container
 2. **Install**: Double-click the `.pkg` file and follow the installer prompts
 
 After installing via either method:
-3. **Start Service**: Run `container system start` to start the API server
-4. **Verify**: Check installation with `container --version`
+1. **Start Service**: Run `container system start` to start the API server
+2. **Verify**: Check installation with `container --version`
 
 **Note**: kina requires Apple Container **1.0.0 or later**. The version is automatically detected and validated when kina starts. Run `kina` (no arguments) to see your kina and Apple Container versions.
 
@@ -64,7 +64,24 @@ After installing via either method:
 
 ## Installation
 
-### Option 1: From Source (Recommended)
+### Option 1: mise (GitHub backend)
+
+If you have [mise](https://mise.jdx.dev/) installed, you can install kina directly from GitHub Releases without cloning the repository:
+
+```bash
+# Install the latest 0.1.0 release via mise github backend
+mise use github:vinnie357/kina@0.1.0
+
+# Or add to your project's mise.toml:
+# [tools]
+# "github:vinnie357/kina" = "0.1.0"
+```
+
+The mise github backend auto-selects the `aarch64-apple-darwin` binary on macOS (Apple Silicon). No `asset_pattern` option is needed.
+
+> **Note**: `mise install github:vinnie357/kina@0.1.0` installs the kina CLI binary only. The Apple Container runtime (macOS 26+, `brew install container`) is required separately before creating clusters.
+
+### Option 2: From Source
 
 ```bash
 # Clone the repository
@@ -78,7 +95,7 @@ cargo install --path kina-cli
 mise run kina:install
 ```
 
-### Option 2: Development Setup with mise
+### Option 3: Development Setup with mise
 
 ```bash
 # Clone the repository
