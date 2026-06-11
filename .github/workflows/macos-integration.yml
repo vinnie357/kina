@@ -112,6 +112,15 @@ jobs:
           sudo cp target/release/kina /usr/local/bin/kina
           kina --version
 
+      # ── 5b. Install kubectl ────────────────────────────────────────────────
+      - name: Install kubectl
+        run: |
+          KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/darwin/arm64/kubectl"
+          sudo install -o root -g wheel -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
       # ── 6. Create single-node cluster ──────────────────────────────────────
       - name: Create single-node cluster (ci-test)
         run: |
