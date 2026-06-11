@@ -55,6 +55,17 @@ pub struct CreateArgs {
     /// Backed by node_kernel_path (resolved via select_kernel_path precedence).
     #[arg(long = "kernel-path", value_name = "PATH")]
     pub node_kernel_path: Option<PathBuf>,
+
+    /// CPU count for all nodes (overrides per-role config defaults and the built-in default of 4).
+    /// Applies to both control-plane and worker nodes.
+    #[arg(long, value_name = "N")]
+    pub cpus: Option<u32>,
+
+    /// Memory for all nodes (overrides per-role config defaults and the built-in default of 4g).
+    /// Format: <positive-int><m|g> (e.g. "512m", "2g", "8g").
+    /// Applies to both control-plane and worker nodes.
+    #[arg(long, value_name = "SIZE")]
+    pub memory: Option<String>,
 }
 
 /// Delete a Kubernetes cluster
@@ -320,6 +331,36 @@ impl CreateArgs {
             )
         };
 
+        // Resolve per-role resource values: CLI flag > per-role config default > built-in default.
+        // The --cpus/--memory flags apply to ALL nodes (both control-plane and worker).
+        use crate::core::apple_container::{
+            resolve_cpus, resolve_memory, validate_resources, DEFAULT_NODE_CPUS,
+            DEFAULT_NODE_MEMORY,
+        };
+
+        let control_plane_cpus = resolve_cpus(
+            self.cpus,
+            config.cluster.control_plane_cpus,
+            DEFAULT_NODE_CPUS,
+        );
+        let control_plane_memory = resolve_memory(
+            self.memory.as_deref(),
+            config.cluster.control_plane_memory.as_deref(),
+            DEFAULT_NODE_MEMORY,
+        );
+        let worker_cpus = resolve_cpus(self.cpus, config.cluster.worker_cpus, DEFAULT_NODE_CPUS);
+        let worker_memory = resolve_memory(
+            self.memory.as_deref(),
+            config.cluster.worker_memory.as_deref(),
+            DEFAULT_NODE_MEMORY,
+        );
+
+        // Validate resolved resource values before constructing options or touching containers.
+        validate_resources(control_plane_cpus, &control_plane_memory)
+            .context("Invalid control-plane resource specification")?;
+        validate_resources(worker_cpus, &worker_memory)
+            .context("Invalid worker resource specification")?;
+
         let options = CreateClusterOptions {
             name: self.name.clone(),
             image: self.image.clone(),
@@ -336,6 +377,10 @@ impl CreateArgs {
             skip_csr_approval: self.skip_csr_approval,
             cni_plugin,
             node_kernel_path,
+            control_plane_cpus,
+            control_plane_memory,
+            worker_cpus,
+            worker_memory,
         };
 
         cluster_manager.create_cluster(options).await?;

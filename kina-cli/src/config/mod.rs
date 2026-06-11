@@ -79,6 +79,31 @@ pub struct ClusterDefaults {
     /// When None (the default), the system default kernel is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_kernel_path: Option<PathBuf>,
+
+    /// Per-role resource defaults (all optional).
+    ///
+    /// Resource precedence: CLI flag (--cpus/--memory) > per-role config default
+    /// (control_plane_*/worker_*) > built-in default (DEFAULT_NODE_CPUS=4 / DEFAULT_NODE_MEMORY=4g).
+    ///
+    /// The single-node path (workers==0, combined control-plane+worker role) resolves
+    /// using the control_plane_* slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_plane_cpus: Option<u32>,
+
+    /// Per-role memory default for control-plane nodes (e.g. "8g", "512m").
+    /// See control_plane_cpus for the full precedence documentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_plane_memory: Option<String>,
+
+    /// Per-role CPU default for worker nodes.
+    /// See control_plane_cpus for the full precedence documentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_cpus: Option<u32>,
+
+    /// Per-role memory default for worker nodes (e.g. "2g", "512m").
+    /// See control_plane_cpus for the full precedence documentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_memory: Option<String>,
 }
 
 /// CNI plugin options
@@ -190,6 +215,10 @@ impl Default for Config {
                 retain_on_failure: false,
                 default_cni: CniPlugin::Ptp, // Default to PTP for Apple Container compatibility
                 node_kernel_path: None,      // Stock kernel by default; set to enable custom kernel
+                control_plane_cpus: None,
+                control_plane_memory: None,
+                worker_cpus: None,
+                worker_memory: None,
             },
             kernel: KernelConfig::default(),
             apple_container: AppleContainerConfig {
