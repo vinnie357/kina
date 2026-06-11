@@ -60,13 +60,18 @@ rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
 ///   `EnableL7Proxy=true`; that function issues `ip rule replace … table local` with AF_INET
 ///   which the kernel rejects with EAFNOSUPPORT, crashing the cilium-agent before it starts.
 ///   Network policy enforcement (L3/L4) and pod-to-pod connectivity are unaffected.
-/// - `dnsproxy.enable-transparent-mode=false` — disables the transparent DNS proxy iptables
-///   rules. This is a **separate code path** from the L7 proxy (Envoy) controlled by
-///   `l7Proxy=false`. Even with `l7Proxy=false`, Cilium 1.18.x auto-detects DNS proxy ports
-///   and installs a `CILIUM_PRE_mangle -m socket --transparent` iptables rule in the mangle
-///   table. This rule requires the `xt_socket` kernel module
-///   (`CONFIG_NETFILTER_XT_MATCH_SOCKET`), which is absent from the Apple Container
-///   kata-kernel, causing iptables exit status 2 and cilium-agent CrashLoopBackOff.
+/// - `extraConfig.dnsproxy-enable-transparent-mode=false` — injects the key
+///   `dnsproxy-enable-transparent-mode: "false"` verbatim into the `cilium-config` ConfigMap
+///   (the `extraConfig` Helm key merges arbitrary keys directly; it is immune to chart path
+///   renames). This is a **separate code path** from the L7 proxy (Envoy) disabled by
+///   `l7Proxy=false`. Even with `l7Proxy=false`, Cilium 1.18.x unconditionally installs a
+///   `CILIUM_PRE_mangle -m socket --transparent` iptables rule in the mangle table.
+///   That rule requires the `xt_socket` kernel module (`CONFIG_NETFILTER_XT_MATCH_SOCKET`),
+///   which is absent from the Apple Container kata-kernel (confirmed: `iptables v1.8.8 legacy:
+///   unknown option --transparent`, exit status 2, cilium-agent CrashLoopBackOff).
+///   NOTE: Do NOT also set a chart-native `dnsProxy.*` path simultaneously — that would produce
+///   a duplicate key in the rendered ConfigMap. See cilium/cilium#32448 and
+///   kubernetes/minikube#18851 for the broader kata-kernel xt_socket / ip-rule context.
 /// - `nodePort.enabled=true` AND `hostPort.enabled=true` — BOTH required: without nodePort,
 ///   hostPort is silently ignored, breaking nginx-ingress DaemonSet on 80/443,
 ///   see cilium/cilium#31168
@@ -83,7 +88,7 @@ pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
          --set ipv6.enabled=false \
          --set enableLocalNodeRoute=false \
          --set l7Proxy=false \
-         --set dnsproxy.enable-transparent-mode=false \
+         --set extraConfig.dnsproxy-enable-transparent-mode=false \
          --set nodePort.enabled=true \
          --set hostPort.enabled=true \
          --set k8sServiceHost={cp_ip} \
