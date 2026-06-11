@@ -440,17 +440,17 @@ kina create my-cluster --image kina/node:v1.31.0
 
 ### Task Tracking
 
-kina uses [beads](https://github.com/lumen-org/beads) (`bd`) for distributed git-backed task tracking. Tasks are stored in the `.beads/` directory and synced via git.
+kina uses **bees** for task tracking, a lightweight SQLite-backed local issue tracker. Issues are stored in the `.bees/` directory (JSONL synced via git, SQLite db local-only).
 
 ```bash
-bd ready                         # Find tasks ready to work on (no blockers)
-bd list                          # List all open tasks
-bd show <id>                     # View task details
-bd update <id> --status in_progress  # Claim a task
-bd close <id>                    # Complete a task
+bees ready                       # Find tasks ready to work on (no blockers)
+bees list                        # List all open tasks
+bees show <id>                   # View task details
+bees update <id> --status in_progress  # Claim a task
+bees close <id>                  # Complete a task
 ```
 
-See [AGENTS.md](AGENTS.md) for the full beads workflow.
+See [AGENTS.md](AGENTS.md) for the full bees workflow.
 
 ### Pre-commit and Secret Scanning
 
@@ -515,9 +515,9 @@ kina/
 │   └── Cargo.toml
 ├── scripts/                    # Extracted mise task scripts (Nushell)
 ├── docs/                       # Research, planning, and development docs
-├── .beads/                     # Distributed task tracking (beads)
+├── .bees/                      # Task tracking (bees)
 ├── CLAUDE.md                   # AI assistant context
-├── AGENTS.md                   # Beads workflow for AI agents
+├── AGENTS.md                   # Bees workflow for AI agents
 ├── mise.toml                   # Development automation
 ├── Cargo.toml                  # Workspace configuration
 └── README.md
@@ -608,7 +608,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 1. **Fork and Clone**: Fork the repository and clone your fork
 2. **Setup Environment**: Run `mise run setup:dev` for complete setup
-3. **Find Work**: Run `bd ready` to find available tasks
+3. **Find Work**: Run `bees ready` to find available tasks
 4. **Create Branch**: Create a feature branch for your changes
 5. **Develop**: Make changes with comprehensive tests
 6. **Quality Checks**: Run `mise run pre-commit` before committing (includes gitleaks)
