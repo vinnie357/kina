@@ -6,6 +6,7 @@ KINA_DATA_DIR = "$HOME/.local/share/kina"
 
 [tools]
 rust = "stable"
+kubectl = "1.36.1"
 kubectx = "latest"
 kubens = "latest"
 cilium-cli = "0.19.4"

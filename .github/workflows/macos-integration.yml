@@ -88,12 +88,15 @@ jobs:
           container system kernel set --binary ~/.kina/kernels/Image --force
           echo "Custom kernel installed from ~/.kina/kernels/Image"
 
-      # ── 5. Rust toolchain + cargo build ────────────────────────────────────
-      - name: Install Rust stable toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      # ── 5. Dev tools via mise + cargo build ───────────────────────────────
+      # jdx/mise-action v4.1.0 → dba19683ed58901619b14f395a24841710cb4925
+      - name: Install dev tools (mise)
+        uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925
         with:
-          toolchain: stable
+          install: true   # runs `mise install` — pins rust=stable, kubectl=1.36.1 from mise.toml
+          cache: true     # mise-action manages tool cache
 
+      # Cargo build-artifact cache (kina-cli target dir; not covered by mise-action)
       - name: Cache cargo build artifacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -111,15 +114,6 @@ jobs:
           echo "Build complete: $(ls -lh target/release/kina)"
           sudo cp target/release/kina /usr/local/bin/kina
           kina --version
-
-      # ── 5b. Install kubectl ────────────────────────────────────────────────
-      - name: Install kubectl
-        run: |
-          KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
-          curl -fsSL -o /tmp/kubectl \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/darwin/arm64/kubectl"
-          sudo install -o root -g wheel -m 0755 /tmp/kubectl /usr/local/bin/kubectl
-          kubectl version --client
 
       # ── 6. Create single-node cluster ──────────────────────────────────────
       - name: Create single-node cluster (ci-test)
