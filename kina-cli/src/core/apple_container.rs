@@ -412,6 +412,134 @@ pub fn node_cap_args() -> Vec<&'static str> {
     vec!["--cap-add", "ALL"]
 }
 
+/// Generate kubeadm init configuration YAML (v1beta4, K8s v1.35.5).
+///
+/// Emits three stanzas separated by "---":
+///   1. InitConfiguration  — advertise address, criSocket, kubeletExtraArgs (list form)
+///   2. ClusterConfiguration — kubernetesVersion v1.35.5, apiServer/controllerManager extraArgs (list form)
+///   3. JoinConfiguration  — criSocket, kubeletExtraArgs (list form)
+///
+/// Followed by KubeletConfiguration and KubeProxyConfiguration stanzas.
+///
+/// The map→list migration for kubeletExtraArgs and extraArgs mirrors
+/// PR #14 (vinnie357/kina) which adopted the kubeadm v1beta4 list form.
+pub fn generate_kubeadm_init_config(
+    container_name: &str,
+    vm_ip: &str,
+    cluster_name: &str,
+) -> String {
+    format!(
+        r#"apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{vm_ip}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.35.5
+clusterName: "{cluster_name}"
+controlPlaneEndpoint: "{vm_ip}:6443"
+apiServer:
+  certSANs:
+  - "{vm_ip}"
+  - "{container_name}"
+  - "localhost"
+  - "127.0.0.1"
+  extraArgs:
+  - name: runtime-config
+    value: "api/all=true"
+networking:
+  serviceSubnet: "10.96.0.0/16"
+  podSubnet: "10.244.0.0/16"
+  dnsDomain: "cluster.local"
+controllerManager:
+  extraArgs:
+  - name: enable-hostpath-provisioner
+    value: "true"
+scheduler: {{}}
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+failSwapOn: false
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+authorization:
+  mode: Webhook
+serverTLSBootstrap: true
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+bindAddress: "0.0.0.0"
+healthzBindAddress: "0.0.0.0:10256"
+metricsBindAddress: "0.0.0.0:10249"
+clusterCIDR: "10.244.0.0/16"
+"#,
+    )
+}
+
+/// Generate kubeadm worker-join configuration YAML (v1beta4).
+///
+/// Emits a JoinConfiguration stanza with kubeletExtraArgs in list form,
+/// followed by a KubeletConfiguration stanza.
+///
+/// The map→list migration mirrors PR #14 (vinnie357/kina).
+pub fn generate_worker_join_config(
+    _worker_name: &str,
+    worker_ip: &str,
+    join_info: &KubeadmJoinInfo,
+) -> String {
+    format!(
+        r#"apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "{endpoint}"
+    token: "{token}"
+    caCertHashes:
+    - "{hash}"
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{worker_ip}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+failSwapOn: false
+"#,
+        endpoint = join_info.control_plane_endpoint,
+        token = join_info.token,
+        hash = join_info.ca_cert_hash,
+        worker_ip = worker_ip,
+    )
+}
+
 /// Client for interacting with Apple Container
 pub struct AppleContainerClient {
     config: Config,
@@ -1732,79 +1860,14 @@ impl AppleContainerClient {
         ))
     }
 
-    /// Generate kubeadm init configuration YAML
+    /// Generate kubeadm init configuration YAML (method wrapper for compatibility)
     fn generate_kubeadm_init_config(
         &self,
         container_name: &str,
         vm_ip: &str,
         cluster_name: &str,
     ) -> String {
-        format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
-kind: InitConfiguration
-localAPIEndpoint:
-  advertiseAddress: "{vm_ip}"
-  bindPort: 6443
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
----
-apiVersion: kubeadm.k8s.io/v1beta3
-kind: ClusterConfiguration
-kubernetesVersion: v1.31.0
-clusterName: "{cluster_name}"
-controlPlaneEndpoint: "{vm_ip}:6443"
-apiServer:
-  certSANs:
-  - "{vm_ip}"
-  - "{container_name}"
-  - "localhost"
-  - "127.0.0.1"
-  extraArgs:
-    runtime-config: "api/all=true"
-networking:
-  serviceSubnet: "10.96.0.0/16"
-  podSubnet: "10.244.0.0/16"
-  dnsDomain: "cluster.local"
-controllerManager:
-  extraArgs:
-    enable-hostpath-provisioner: "true"
-scheduler: {{}}
-etcd:
-  local:
-    dataDir: "/var/lib/etcd"
----
-apiVersion: kubeadm.k8s.io/v1beta3
-kind: JoinConfiguration
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: systemd
-failSwapOn: false
-authentication:
-  anonymous:
-    enabled: false
-  webhook:
-    enabled: true
-authorization:
-  mode: Webhook
-serverTLSBootstrap: true
----
-apiVersion: kubeproxy.config.k8s.io/v1alpha1
-kind: KubeProxyConfiguration
-bindAddress: "0.0.0.0"
-healthzBindAddress: "0.0.0.0:10256"
-metricsBindAddress: "0.0.0.0:10249"
-clusterCIDR: "10.244.0.0/16"
-"#,
-        )
+        generate_kubeadm_init_config(container_name, vm_ip, cluster_name)
     }
 
     /// Write kubeadm config and run kubeadm init in a container.
@@ -1979,31 +2042,8 @@ clusterCIDR: "10.244.0.0/16"
     ) -> Result<()> {
         info!("Joining worker '{}' to cluster", worker_name);
 
-        // Write a JoinConfiguration YAML to the worker
-        let join_config = format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
-kind: JoinConfiguration
-discovery:
-  bootstrapToken:
-    apiServerEndpoint: "{endpoint}"
-    token: "{token}"
-    caCertHashes:
-    - "{hash}"
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{worker_ip}"
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: systemd
-failSwapOn: false
-"#,
-            endpoint = join_info.control_plane_endpoint,
-            token = join_info.token,
-            hash = join_info.ca_cert_hash,
-            worker_ip = worker_ip,
-        );
+        // Write a JoinConfiguration YAML to the worker (v1beta4, list form for kubeletExtraArgs)
+        let join_config = generate_worker_join_config(worker_name, worker_ip, join_info);
 
         // Write join config to worker container
         let mut cmd = std::process::Command::new(&self.cli_path);
