@@ -149,6 +149,116 @@ pub fn node_kernel_args(kernel_path: Option<&std::path::Path>) -> Vec<String> {
     }
 }
 
+/// Built-in default CPU count for node containers.
+///
+/// Matches the prior hardcoded value ("--cpus", "4") so that changing nothing in the
+/// config preserves existing cluster creation behaviour.
+pub const DEFAULT_NODE_CPUS: u32 = 4;
+
+/// Built-in default memory for node containers.
+///
+/// Matches the prior hardcoded value ("--memory", "4g") so that changing nothing in the
+/// config preserves existing cluster creation behaviour.
+pub const DEFAULT_NODE_MEMORY: &str = "4g";
+
+/// Returns the `--cpus <n> --memory <size>` arguments to pass to `container run`.
+///
+/// Produces an owned-String Vec (like `node_kernel_args`) because the values are dynamic.
+/// Used by all three node-creation fns. Callers build the owned Vec, then turn it into
+/// `&str` refs for `args.extend_from_slice`:
+///
+/// ```ignore
+/// let res_owned = node_resource_args(cpus, &memory);
+/// let res_refs: Vec<&str> = res_owned.iter().map(|s| s.as_str()).collect();
+/// args.extend_from_slice(&res_refs);
+/// ```
+pub fn node_resource_args(cpus: u32, memory: &str) -> Vec<String> {
+    vec![
+        "--cpus".to_string(),
+        cpus.to_string(),
+        "--memory".to_string(),
+        memory.to_string(),
+    ]
+}
+
+/// Validate that `cpus` and `memory` are usable by `container run`.
+///
+/// Errors include the field name ("cpus" or "memory") in their message so that
+/// CLI error output is unambiguous:
+/// - `cpus == 0` → `Err("cpus: ...")`
+/// - empty memory → `Err("memory: ...")`
+/// - memory with no m/g suffix → `Err("memory: ...")`
+/// - memory with non-numeric prefix → `Err("memory: ...")`
+/// - memory numeric prefix is 0 → `Err("memory: ...")`
+///
+/// Mirrors `validate_version`'s `Result<()>` + `anyhow::anyhow!` style.
+pub fn validate_resources(cpus: u32, memory: &str) -> anyhow::Result<()> {
+    if cpus == 0 {
+        return Err(anyhow::anyhow!(
+            "cpus: value must be at least 1; got 0 (a 0-CPU node cannot boot)"
+        ));
+    }
+
+    if memory.is_empty() {
+        return Err(anyhow::anyhow!(
+            "memory: value must not be empty; expected format <positive-int><m|g> (e.g. \"512m\", \"4g\")"
+        ));
+    }
+
+    // Accept <positive-int><m|M|g|G>
+    let lower = memory.to_lowercase();
+    let suffix = lower.chars().last().unwrap_or('\0');
+    if suffix != 'm' && suffix != 'g' {
+        return Err(anyhow::anyhow!(
+            "memory: value \"{}\" has no valid unit suffix; \
+             expected format <positive-int><m|g> (e.g. \"512m\", \"4g\")",
+            memory
+        ));
+    }
+
+    let numeric_part = &lower[..lower.len() - 1];
+    let n: u64 = numeric_part.parse().map_err(|_| {
+        anyhow::anyhow!(
+            "memory: numeric prefix \"{}\" in \"{}\" is not a valid integer; \
+             expected format <positive-int><m|g> (e.g. \"512m\", \"4g\")",
+            numeric_part,
+            memory
+        )
+    })?;
+
+    if n == 0 {
+        return Err(anyhow::anyhow!(
+            "memory: value \"{}\" has a zero numeric prefix; \
+             must be a positive integer followed by m or g",
+            memory
+        ));
+    }
+
+    Ok(())
+}
+
+/// Resolve the effective CPU count using the three-tier precedence model.
+///
+/// Precedence (highest to lowest):
+///   1. CLI `--cpus` flag (`cli`)
+///   2. Per-role config default (`config`)
+///   3. Built-in default (`builtin` — callers pass `DEFAULT_NODE_CPUS`)
+pub fn resolve_cpus(cli: Option<u32>, config: Option<u32>, builtin: u32) -> u32 {
+    cli.or(config).unwrap_or(builtin)
+}
+
+/// Resolve the effective memory string using the three-tier precedence model.
+///
+/// Precedence (highest to lowest):
+///   1. CLI `--memory` flag (`cli`)
+///   2. Per-role config default (`config`)
+///   3. Built-in default (`builtin` — callers pass `DEFAULT_NODE_MEMORY`)
+///
+/// Returns an owned `String` so callers can store it in structs without lifetime issues.
+pub fn resolve_memory(cli: Option<&str>, config: Option<&str>, builtin: &str) -> String {
+    cli.or(config).unwrap_or(builtin).to_string()
+}
+
 /// Resolve the effective kernel path: CLI flag takes precedence over the config default.
 ///
 /// Mirrors the `select_cni` precedence model — CLI flag always wins over config default.
@@ -651,6 +761,8 @@ impl AppleContainerClient {
                 &options.image,
                 cni,
                 options.node_kernel_path.as_deref(),
+                options.control_plane_cpus,
+                &options.control_plane_memory,
             )
             .await?;
         } else {
@@ -688,6 +800,8 @@ impl AppleContainerClient {
             &options.image,
             true,
             options.node_kernel_path.as_deref(),
+            options.control_plane_cpus,
+            &options.control_plane_memory,
         )
         .await?;
 
@@ -736,6 +850,8 @@ impl AppleContainerClient {
                 &worker_name,
                 &options.image,
                 options.node_kernel_path.as_deref(),
+                options.worker_cpus,
+                &options.worker_memory,
             )
             .await?;
 
@@ -849,6 +965,7 @@ impl AppleContainerClient {
 
     /// Create a single node with combined control-plane and worker roles
     /// Note: Required due to Apple Container VM communication limitation until macOS 26
+    #[allow(clippy::too_many_arguments)]
     async fn create_single_node(
         &self,
         cluster_name: &str,
@@ -856,6 +973,8 @@ impl AppleContainerClient {
         image: &str,
         cni: CniPlugin,
         kernel_path: Option<&std::path::Path>,
+        cpus: u32,
+        memory: &str,
     ) -> Result<()> {
         info!("Creating single Kubernetes node '{}'", node_name);
 
@@ -890,13 +1009,15 @@ impl AppleContainerClient {
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
 
-        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // Resource allocation: resolved CPUs and memory per node.
         // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
         // kube-system stack (etcd + apiserver + KCM + scheduler + Cilium agent +
         // cilium-operator + Envoy DaemonSet + Hubble). OOM kills cascade into
         // control-plane component crashes that look like TLS / leader-election failures.
         // 4 GB is the minimum for a stable full-eBPF Cilium cluster.
-        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+        let res_owned = node_resource_args(cpus, memory);
+        let res_refs: Vec<&str> = res_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&res_refs);
 
         // Inject custom kernel args when a kernel path is configured.
         // node_kernel_args returns ["--kernel", "<path>"] or [] for stock kernel.
@@ -977,6 +1098,7 @@ impl AppleContainerClient {
     }
 
     /// Create a control plane node
+    #[allow(clippy::too_many_arguments)]
     async fn create_control_plane_node(
         &self,
         cluster_name: &str,
@@ -984,6 +1106,8 @@ impl AppleContainerClient {
         image: &str,
         is_primary: bool,
         kernel_path: Option<&std::path::Path>,
+        cpus: u32,
+        memory: &str,
     ) -> Result<()> {
         info!("Creating control plane node '{}'", node_name);
 
@@ -1019,10 +1143,12 @@ impl AppleContainerClient {
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
 
-        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // Resource allocation: resolved CPUs and memory per node.
         // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
         // kube-system stack. See single-node creation comment for rationale.
-        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+        let cp_res_owned = node_resource_args(cpus, memory);
+        let cp_res_refs: Vec<&str> = cp_res_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&cp_res_refs);
 
         // Inject custom kernel args when a kernel path is configured.
         let cp_kernel_args_owned = node_kernel_args(kernel_path);
@@ -1069,6 +1195,8 @@ impl AppleContainerClient {
         node_name: &str,
         image: &str,
         kernel_path: Option<&std::path::Path>,
+        cpus: u32,
+        memory: &str,
     ) -> Result<()> {
         info!("Creating worker node '{}'", node_name);
 
@@ -1098,10 +1226,12 @@ impl AppleContainerClient {
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
 
-        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // Resource allocation: resolved CPUs and memory per node.
         // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
         // kube-system stack. See single-node creation comment for rationale.
-        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+        let wk_res_owned = node_resource_args(cpus, memory);
+        let wk_res_refs: Vec<&str> = wk_res_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&wk_res_refs);
 
         // Inject custom kernel args when a kernel path is configured.
         let wk_kernel_args_owned = node_kernel_args(kernel_path);

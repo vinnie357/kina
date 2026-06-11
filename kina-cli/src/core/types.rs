@@ -33,6 +33,22 @@ pub struct CreateClusterOptions {
     /// When Some, kina passes `--kernel <path>` to every node `container run` invocation.
     /// When None, the system default (stock) kernel is used.
     pub node_kernel_path: Option<PathBuf>,
+
+    /// Resolved CPU count for control-plane nodes (and for single-node clusters).
+    /// Determined by: CLI --cpus flag > config control_plane_cpus > DEFAULT_NODE_CPUS.
+    pub control_plane_cpus: u32,
+
+    /// Resolved memory for control-plane nodes (and for single-node clusters).
+    /// Determined by: CLI --memory flag > config control_plane_memory > DEFAULT_NODE_MEMORY.
+    pub control_plane_memory: String,
+
+    /// Resolved CPU count for worker nodes.
+    /// Determined by: CLI --cpus flag > config worker_cpus > DEFAULT_NODE_CPUS.
+    pub worker_cpus: u32,
+
+    /// Resolved memory for worker nodes.
+    /// Determined by: CLI --memory flag > config worker_memory > DEFAULT_NODE_MEMORY.
+    pub worker_memory: String,
 }
 
 /// Options for loading images into a cluster

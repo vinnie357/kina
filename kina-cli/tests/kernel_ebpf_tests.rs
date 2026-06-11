@@ -174,6 +174,10 @@ fn create_cluster_options_has_node_kernel_path_field() {
         skip_csr_approval: false,
         cni_plugin: kina_cli::config::CniPlugin::Ptp,
         node_kernel_path: None,
+        control_plane_cpus: 4u32,
+        control_plane_memory: "4g".to_string(),
+        worker_cpus: 4u32,
+        worker_memory: "4g".to_string(),
     };
     assert!(
         opts.node_kernel_path.is_none(),
