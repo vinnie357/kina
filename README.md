@@ -6,16 +6,6 @@
 
 **kina** is a Rust CLI tool for running local Kubernetes clusters using Apple Container technology. It provides similar functionality to [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) but is optimized for macOS systems, leveraging native Apple Container technology for improved performance and integration.
 
-## 🚀 Quick Start Summary
-
-1. **Install Apple Container** from [GitHub releases](https://github.com/apple/container/releases) and run `container system start`
-2. **Install kina** with `cargo install --path kina-cli` or `mise run kina:install` (requires cloning this repo)
-3. **Create cluster** with `kina create my-cluster`
-4. **Export kubeconfig** with `kina export my-cluster --format kubeconfig --output ~/.kube/my-cluster`
-5. **Use kubectl** with `export KUBECONFIG=~/.kube/my-cluster && kubectl get nodes`
-
-📖 **New to kina?** Follow the complete [installation](#installation) and [quick start](#quick-start) guide below.
-
 ## Table of Contents
 
 - [Features](#features)

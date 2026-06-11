@@ -62,3 +62,18 @@ pub struct ProbeResult {
 pub fn aggregate_verify(results: &[ProbeResult]) -> bool {
     !results.is_empty() && results.iter().all(|r| r.passed)
 }
+
+/// Decide the HTTP-layer pass/fail for the verify command.
+///
+/// Returns `false` when `node_ips` is empty — empty IPs means
+/// `get_cluster_status` failed or produced no addresses, which is itself a
+/// failure: zero HTTP evidence must never be reported as PASS.
+///
+/// When `node_ips` is non-empty the decision delegates to
+/// [`aggregate_verify`] over the collected `results`.
+pub fn http_layer_pass(node_ips: &[String], results: &[ProbeResult]) -> bool {
+    if node_ips.is_empty() {
+        return false;
+    }
+    aggregate_verify(results)
+}

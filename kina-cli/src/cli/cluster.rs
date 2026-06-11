@@ -8,8 +8,8 @@ use crate::config::{CniPlugin, Config};
 use crate::core::cluster::ClusterManager;
 use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions};
 use crate::core::verify::{
-    aggregate_verify, parse_dns_domain, probe_host, probe_passed, probe_url, render_demo_manifest,
-    ProbeResult,
+    aggregate_verify, http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url,
+    render_demo_manifest, ProbeResult,
 };
 
 /// Create a new Kubernetes cluster
@@ -882,6 +882,11 @@ impl VerifyArgs {
             Err(_) => vec![],
         };
 
+        if node_ips.is_empty() {
+            all_pass = false;
+            println!("FAIL HTTP probes: node IPs could not be determined");
+        }
+
         let mut probe_results: Vec<ProbeResult> = vec![];
 
         for ip in &node_ips {
@@ -923,10 +928,13 @@ impl VerifyArgs {
             });
         }
 
-        if !node_ips.is_empty() {
-            let http_pass = aggregate_verify(&probe_results);
-            if !http_pass {
-                all_pass = false;
+        // http_layer_pass: returns false for empty node_ips (no-evidence FAIL)
+        // and delegates to aggregate_verify for the probe results when IPs are present.
+        let probes_pass = aggregate_verify(&probe_results);
+        let http_pass = http_layer_pass(&node_ips, &probe_results);
+        if !http_pass {
+            all_pass = false;
+            if !probes_pass {
                 for r in &probe_results {
                     if !r.passed {
                         println!("  node {} did not return demo marker", r.node);
