@@ -1,10 +1,14 @@
 #!/usr/bin/env nu
 
-let image_tag = "kina/node:v1.31.0"
+let image_tag = "kina/node:v1.35.5"
 print $"Testing node image: ($image_tag)"
 
 let images = (do { ^container image list } | complete)
-if not ($images.stdout | str contains $image_tag) {
+# container image list output has NAME and TAG as separate columns, not "name:tag"
+let tag_parts = ($image_tag | split row ":")
+let img_name = ($tag_parts | first)
+let img_version = ($tag_parts | last)
+if not (($images.stdout | str contains $img_name) and ($images.stdout | str contains $img_version)) {
     print $"Image ($image_tag) not found. Run 'mise run image:build' first."
     exit 1
 }

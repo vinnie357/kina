@@ -1,7 +1,7 @@
 #!/usr/bin/env nu
 
-print "Building Kina Kubernetes node image..."
-let image_tag = "kina/node:v1.31.0"
+print "Building Kina Kubernetes node image (K8s 1.35.5, containerd 2.3.1, runc 1.4.2, CNI 1.9.1, debian:13-slim)..."
+let image_tag = "kina/node:v1.35.5"
 
 cd kina-cli/images
 
@@ -15,7 +15,12 @@ if $build.exit_code != 0 {
 }
 
 let images = (do { ^container image list } | complete)
-if ($images.stdout | str contains $image_tag) {
+# container image list output has NAME and TAG as separate columns, not "name:tag"
+# Split image_tag into name and tag parts for matching
+let tag_parts = ($image_tag | split row ":")
+let img_name = ($tag_parts | first)
+let img_version = ($tag_parts | last)
+if (($images.stdout | str contains $img_name) and ($images.stdout | str contains $img_version)) {
     print $"Successfully built image: ($image_tag)"
 } else {
     print "Failed to build image"

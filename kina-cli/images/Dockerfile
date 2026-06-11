@@ -142,7 +142,8 @@ RUN mkdir -p /kind
 RUN systemctl enable containerd kubelet
 
 # Configure kernel modules for Cilium
-RUN cat > /etc/modules-load.d/cilium.conf << 'EOF'
+RUN mkdir -p /etc/modules-load.d \
+    && cat > /etc/modules-load.d/cilium.conf << 'EOF'
 # Kernel modules required for Cilium CNI
 br_netfilter
 ip_tables
@@ -163,7 +164,8 @@ vxlan
 EOF
 
 # Configure sysctl for Kubernetes and Cilium
-RUN cat > /etc/sysctl.d/99-kubernetes-cri.conf << 'EOF'
+RUN mkdir -p /etc/sysctl.d \
+    && cat > /etc/sysctl.d/99-kubernetes-cri.conf << 'EOF'
 # Required for Kubernetes
 net.bridge.bridge-nf-call-iptables = 1
 net.bridge.bridge-nf-call-ip6tables = 1
