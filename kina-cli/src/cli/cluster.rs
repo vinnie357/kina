@@ -7,7 +7,7 @@ use tracing::{info, warn};
 use crate::config::{CniPlugin, Config};
 use crate::core::cluster::ClusterManager;
 use crate::core::kernel_fetch;
-use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions};
+use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions, NodeRole};
 use crate::core::verify::{
     aggregate_verify, http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url,
     render_demo_manifest, ProbeResult,
@@ -982,6 +982,7 @@ impl VerifyArgs {
             Ok(info) => info
                 .nodes
                 .iter()
+                .filter(|n| n.role == NodeRole::Worker)
                 .filter_map(|n| n.ip_address.clone())
                 .filter(|ip| !ip.is_empty())
                 .collect(),
