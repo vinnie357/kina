@@ -73,6 +73,9 @@ pub enum Commands {
 
     /// Manage kina configuration
     Config(ConfigArgs),
+
+    /// Verify a cluster's health end-to-end (nodes Ready, Cilium, HTTP probe)
+    Verify(VerifyArgs),
 }
 
 impl Cli {
@@ -89,6 +92,7 @@ impl Cli {
             Some(Commands::Export(args)) => args.execute(config).await,
             Some(Commands::ApproveCSR(args)) => args.execute(config).await,
             Some(Commands::Config(args)) => args.execute(config).await,
+            Some(Commands::Verify(args)) => args.execute(config).await,
             None => {
                 println!("kina {}", env!("CARGO_PKG_VERSION"));
                 match ClusterManager::new(config) {

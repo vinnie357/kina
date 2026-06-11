@@ -2,35 +2,51 @@
 # Custom Debian-based image for Apple Container VMs with full kernel support
 # Replaces kindest/node with proper VM-compatible image for Cilium CNI
 
-FROM debian:12-slim
+FROM debian:13-slim
+
+ARG CNI_PLUGINS_VERSION=1.9.1
+ARG CONTAINERD_VERSION=2.3.1
+ARG KUBERNETES_VERSION=1.35.5
+ARG RUNC_VERSION=1.4.2
 
 # Metadata
 LABEL description="Kina Kubernetes Node Image for Apple Container VMs"
-LABEL version="1.31.0"
 LABEL maintainer="kina"
+LABEL version="${KUBERNETES_VERSION}"
 
-# Environment variables
+ENV CNI_PLUGINS_VERSION=${CNI_PLUGINS_VERSION}
+ENV CONTAINERD_VERSION=${CONTAINERD_VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
-ENV KUBERNETES_VERSION=1.31.0
-ENV CONTAINERD_VERSION=1.7.18
-ENV RUNC_VERSION=1.1.12
-ENV CNI_PLUGINS_VERSION=1.5.1
+ENV KUBERNETES_VERSION=${KUBERNETES_VERSION}
+ENV RUNC_VERSION=${RUNC_VERSION}
 
 # Install base system packages (Apple Container VM provides kernel)
 RUN apt-get update && apt-get install -y \
-    # Base system
-    systemd systemd-sysv init \
-    ca-certificates curl gnupg lsb-release \
-    apt-transport-https software-properties-common \
-    # Network utilities
-    iptables ipset iproute2 netcat-openbsd socat \
-    # Module loading utilities (for Apple Container VM kernel)
+    # Base system \
+    ca-certificates \
+    curl \
+    gnupg \
+    init \
+    systemd \
+    systemd-sysv \
+    # Network utilities \
+    iproute2 \
+    ipset \
+    iptables \
+    netcat-openbsd \
+    socat \
+    # Module loading utilities (for Apple Container VM kernel) \
     kmod \
-    # Container runtime dependencies
+    # Container runtime dependencies \
+    erofs-utils \
     fuse-overlayfs \
-    # Utilities
-    jq vim nano wget htop \
-    # Cleanup
+    # Utilities \
+    htop \
+    jq \
+    nano \
+    vim \
+    wget \
+    # Cleanup \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,12 +56,12 @@ STOPSIGNAL SIGRTMIN+3
 
 RUN systemctl set-default multi-user.target \
     && systemctl mask \
-    dev-hugepages.mount \
-    sys-fs-fuse-connections.mount \
-    systemd-update-utmp.service \
-    systemd-tmpfiles-setup.service \
-    console-getty.service \
-    systemd-logind.service \
+         console-getty.service \
+         dev-hugepages.mount \
+         sys-fs-fuse-connections.mount \
+         systemd-logind.service \
+         systemd-tmpfiles-setup.service \
+         systemd-update-utmp.service \
     && systemctl disable systemd-resolved \
     && systemctl disable systemd-timesyncd
 
@@ -94,10 +110,11 @@ OOMScoreAdjust=-999
 WantedBy=multi-user.target
 EOF
 
-# Add Kubernetes apt repository
-RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key \
+# Add Kubernetes apt repository (version derived from ARG for reproducible pinning)
+RUN KUBE_MINOR="v$(echo "${KUBERNETES_VERSION}" | cut -d. -f1,2)" \
+    && curl -fsSL "https://pkgs.k8s.io/core:/stable:/${KUBE_MINOR}/deb/Release.key" \
     | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /" \
+    && echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${KUBE_MINOR}/deb/ /" \
     > /etc/apt/sources.list.d/kubernetes.list
 
 # Install Kubernetes components
@@ -125,7 +142,8 @@ RUN mkdir -p /kind
 RUN systemctl enable containerd kubelet
 
 # Configure kernel modules for Cilium
-RUN cat > /etc/modules-load.d/cilium.conf << 'EOF'
+RUN mkdir -p /etc/modules-load.d \
+    && cat > /etc/modules-load.d/cilium.conf << 'EOF'
 # Kernel modules required for Cilium CNI
 br_netfilter
 ip_tables
@@ -146,7 +164,8 @@ vxlan
 EOF
 
 # Configure sysctl for Kubernetes and Cilium
-RUN cat > /etc/sysctl.d/99-kubernetes-cri.conf << 'EOF'
+RUN mkdir -p /etc/sysctl.d \
+    && cat > /etc/sysctl.d/99-kubernetes-cri.conf << 'EOF'
 # Required for Kubernetes
 net.bridge.bridge-nf-call-iptables = 1
 net.bridge.bridge-nf-call-ip6tables = 1
@@ -180,6 +199,14 @@ sysctl --system || echo "Warning: some sysctl settings failed"
 # Ensure containerd socket directory exists
 mkdir -p /var/run/containerd
 
+# Kubelet requires /var/lib/kubelet to be a shared bind mount so that volume
+# mounts propagate correctly between the host and pod namespaces.
+# Without this, kubelet fails with "failed to bind-mount /var/lib/kubelet:
+# operation not permitted" even when CAP_SYS_ADMIN is present.
+mkdir -p /var/lib/kubelet
+mount --bind /var/lib/kubelet /var/lib/kubelet
+mount --make-shared /var/lib/kubelet
+
 # Execute the original command (typically /sbin/init)
 echo "Starting systemd..."
 exec "$@"
@@ -188,7 +215,7 @@ EOF
 RUN chmod +x /usr/local/bin/entrypoint
 
 # Expose necessary ports
-EXPOSE 6443 2379-2380 10250 10259 10257
+EXPOSE 2379-2380 6443 10250 10259 10257
 
 # Set up proper init system for VM (following Kind patterns)
 ENTRYPOINT ["/usr/local/bin/entrypoint", "/sbin/init"]

@@ -6,16 +6,6 @@
 
 **kina** is a Rust CLI tool for running local Kubernetes clusters using Apple Container technology. It provides similar functionality to [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) but is optimized for macOS systems, leveraging native Apple Container technology for improved performance and integration.
 
-## 🚀 Quick Start Summary
-
-1. **Install Apple Container** from [GitHub releases](https://github.com/apple/container/releases) and run `container system start`
-2. **Install kina** with `cargo install --path kina-cli` or `mise run kina:install` (requires cloning this repo)
-3. **Create cluster** with `kina create my-cluster`
-4. **Export kubeconfig** with `kina export my-cluster --format kubeconfig --output ~/.kube/my-cluster`
-5. **Use kubectl** with `export KUBECONFIG=~/.kube/my-cluster && kubectl get nodes`
-
-📖 **New to kina?** Follow the complete [installation](#installation) and [quick start](#quick-start) guide below.
-
 ## Table of Contents
 
 - [Features](#features)
@@ -115,6 +105,15 @@ kubectl version --client
 
 ## Quick Start
 
+```bash
+kina create kina-test --workers 2 --cni cilium --kernel-path <path>
+kina install nginx-ingress --cluster kina-test
+kina install demo-app --cluster kina-test
+kina verify kina-test
+```
+
+> `--kernel-path` is required until `kina-8` lands auto-download.
+
 ### Create Your First Cluster
 
 ```bash
@@ -135,11 +134,17 @@ kubectl get nodes
 kina create demo --cni cilium --wait 300
 ```
 
-### Install Nginx Ingress Controller
+### Install Nginx Ingress Controller and Demo App
 
 ```bash
-# Install nginx-ingress to your cluster
+# Install nginx-ingress (manifests embedded in binary — works from any directory)
 kina install nginx-ingress --cluster my-cluster
+
+# Install demo application
+kina install demo-app --cluster my-cluster
+
+# Verify the cluster end-to-end
+kina verify my-cluster
 ```
 
 ### Check Cluster Status
@@ -366,6 +371,8 @@ kina leverages Apple Container technology for running Kubernetes nodes:
 - **Advanced Features**: eBPF-based networking and security
 - **Requirements**: Compatible kernel modules
 - **Use Cases**: Complex networking requirements and observability
+
+Cilium full-eBPF mode requires a custom Linux kernel that kina builds (`6.18.5-kina.1`); enable it per cluster with `kina create ... --cni cilium --kernel-path <path/to/vmlinux>`. Stock kernel (PTP) clusters need nothing extra. See [docs/development/custom-kernel.md](docs/development/custom-kernel.md) for build instructions, usage, distribution, and host-kernel gotchas. (A planned future release will fetch the kernel automatically — a one-time ~32 MB download — so `--kernel-path` will not be required; today it is the only supported path.)
 
 ```bash
 # Create cluster with specific CNI

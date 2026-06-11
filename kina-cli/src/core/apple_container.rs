@@ -7,10 +7,538 @@ use super::types::{
     ClusterInfo, ClusterStatus, CreateClusterOptions, KubeadmJoinInfo, LoadImageOptions, NodeInfo,
     NodeRole,
 };
-use crate::config::Config;
+use crate::config::{CniPlugin, Config};
 
-/// Minimum supported Apple Container version (major, minor, patch)
-const MIN_VERSION: (u32, u32, u32) = (0, 5, 0);
+/// Minimum supported Apple Container version (major, minor, patch).
+/// Raised to 1.0.0: config.toml replaces system property get/set/clear,
+/// structured ls/inspect output shape changed, and container cp is required
+/// for image loading.
+pub const MIN_VERSION: (u32, u32, u32) = (1, 0, 0);
+
+/// Pinned cilium-cli version (2026-05-20 release).
+/// Replacing the runtime curl-based version discovery with a pinned const ensures
+/// reproducible installs and removes the dependency on an outbound HTTP call
+/// during cluster bootstrap.
+pub const CILIUM_CLI_VERSION: &str = "v0.19.4";
+
+/// Pinned Cilium CNI version (latest 1.18.x patch, 2026-05-13).
+/// Stays on the validated 1.18 minor; treat 1.19.x as a separate upgrade.
+pub const CILIUM_VERSION: &str = "1.18.10";
+
+/// Build the shell snippet that downloads and installs the cilium-cli binary
+/// inside a node container. All values are derived from the pinned `cli_version`
+/// const — no runtime version discovery via external HTTP.
+///
+/// The snippet is ARM64-only (Apple Silicon / Apple Container VMs) and retains
+/// the sha256sum integrity check.
+pub fn build_cilium_cli_install_script(cli_version: &str) -> String {
+    format!(
+        r#"CLI_ARCH=arm64
+CILIUM_CLI_VERSION={cli_version}
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/{cli_version}/cilium-linux-arm64.tar.gz{{,.sha256sum}}
+sha256sum --check cilium-linux-arm64.tar.gz.sha256sum
+tar xzvfC cilium-linux-arm64.tar.gz /usr/local/bin
+rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
+        cli_version = cli_version,
+    )
+}
+
+/// Build the `cilium install` command string for the given Cilium version and
+/// control-plane VM IP.
+///
+/// All `--set` values are topology-correct for Apple Container clusters using the
+/// stock kata-kernel (workaround profile — custom kernel switches to the full-eBPF profile):
+/// - kubeadm deploys kube-proxy, so `kubeProxyReplacement=false` makes the hybrid explicit
+/// - `ipam.mode=kubernetes` uses per-node PodCIDRs from `podSubnet 10.244.0.0/16`
+///   (the cilium-cli default cluster-pool 10.0.0.0/8 mismatches the kube-proxy clusterCIDR)
+/// - `routingMode=tunnel` + `tunnelProtocol=vxlan` — outer packets use node VM IPs, vmnet-safe
+/// - `enableLocalNodeRoute=false` — kata-kernel EAFNOSUPPORT workaround,
+///   see cilium/cilium#32448 and kubernetes/minikube#18851
+/// - `l7Proxy=false` — disables Cilium's L7 proxy (Envoy-based). The kata-kernel used by
+///   Apple Container VMs has `CONFIG_IP_ADVANCED_ROUTER` / `CONFIG_IP_MULTIPLE_TABLES` unset,
+///   which means IPv4 policy routing (`ip rule`) is absent. Cilium's L7 proxy init path
+///   calls `NodeEnsureLocalRoutingRule()` (daemon/cmd/daemon.go) unconditionally when
+///   `EnableL7Proxy=true`; that function issues `ip rule replace … table local` with AF_INET
+///   which the kernel rejects with EAFNOSUPPORT, crashing the cilium-agent before it starts.
+///   Network policy enforcement (L3/L4) and pod-to-pod connectivity are unaffected.
+/// - `--set-string extraConfig.dnsproxy-enable-transparent-mode=false` — injects the key
+///   `dnsproxy-enable-transparent-mode: "false"` (string, not boolean) verbatim into the
+///   `cilium-config` ConfigMap. The `extraConfig` Helm key merges arbitrary keys directly
+///   into the ConfigMap and is immune to chart path renames. `--set-string` is required because
+///   the ConfigMap `data` field is `map<string,string>`; using plain `--set` passes a YAML
+///   boolean `false` which the Go JSON unmarshaler rejects with "cannot unmarshal bool into Go
+///   struct field ConfigMap.data of type string". This disables the dnsproxy transparent mode.
+///   NOTE: Do NOT also set a chart-native `dnsProxy.*` path simultaneously — that would produce
+///   a duplicate key in the rendered ConfigMap. See cilium/cilium#32448 and
+///   kubernetes/minikube#18851 for the broader kata-kernel xt_socket / ip-rule context.
+/// - `nodePort.enabled=true` AND `hostPort.enabled=true` — BOTH required: without nodePort,
+///   hostPort is silently ignored, breaking nginx-ingress DaemonSet on 80/443,
+///   see cilium/cilium#31168
+/// - `k8sServiceHost` / `k8sServicePort` remove the kube-proxy bootstrap dependency for
+///   joining workers
+pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
+    format!(
+        "KUBECONFIG=/etc/kubernetes/admin.conf cilium install --version {version} \
+         --set kubeProxyReplacement=false \
+         --set ipam.mode=kubernetes \
+         --set ipv4NativeRoutingCIDR=10.244.0.0/16 \
+         --set routingMode=tunnel \
+         --set tunnelProtocol=vxlan \
+         --set ipv6.enabled=false \
+         --set enableLocalNodeRoute=false \
+         --set l7Proxy=false \
+         --set-string extraConfig.dnsproxy-enable-transparent-mode=false \
+         --set nodePort.enabled=true \
+         --set hostPort.enabled=true \
+         --set k8sServiceHost={cp_ip} \
+         --set k8sServicePort=6443 \
+         --set operator.replicas=1",
+        version = version,
+        cp_ip = cp_ip,
+    )
+}
+
+/// Build the `cilium install` command string for the full-eBPF profile.
+///
+/// Used when kina nodes are booted on the custom kernel (6.18.5+kina.1) which has
+/// all required BPF options compiled in (CONFIG_BPF_JIT=y, CONFIG_BPF_EVENTS=y,
+/// CONFIG_NETFILTER_XT_MATCH_SOCKET=y, CONFIG_IP_MULTIPLE_TABLES=y, etc.).
+///
+/// Full-eBPF values (all kata-kernel workarounds retired):
+/// - `kubeProxyReplacement=true` — Cilium replaces kube-proxy; kubeadm must skip
+///   the addon/kube-proxy phase (see `build_kubeadm_init_args(true)`).
+/// - `bpf.masquerade=true` — eBPF-native masquerade instead of iptables MASQUERADE.
+/// - `bpf.hostLegacyRouting=false` — BPF host routing (requires BPF_JIT + multiple-tables).
+/// - `hubble.enabled=true` — Hubble observability plane (requires BPF_EVENTS + KPROBES).
+/// - `ipam.mode=kubernetes` — per-node PodCIDRs from kubeadm podSubnet 10.244.0.0/16.
+/// - `k8sServiceHost` / `k8sServicePort` — remove kube-proxy bootstrap dependency.
+///
+/// Retired workarounds (vs stock profile):
+/// - enableLocalNodeRoute=false — retired; IP_MULTIPLE_TABLES + FIB_RULES present in kernel.
+/// - l7Proxy=false — retired; L7 proxy enabled (omitted-default-true).
+/// - extraConfig.dnsproxy-enable-transparent-mode=false — retired; XT_MATCH_SOCKET + TPROXY present.
+/// - kubeProxyReplacement=false — retired; full replacement enabled.
+///
+/// Note: l7Proxy is intentionally omitted (default true) rather than set explicitly.
+/// See cilium/cilium#32448 and kubernetes/minikube#18851 for the stock-kernel context.
+pub fn build_cilium_install_cmd_ebpf(version: &str, cp_ip: &str) -> String {
+    format!(
+        "KUBECONFIG=/etc/kubernetes/admin.conf cilium install --version {version} \
+         --set kubeProxyReplacement=true \
+         --set ipam.mode=kubernetes \
+         --set bpf.masquerade=true \
+         --set bpf.hostLegacyRouting=false \
+         --set hubble.enabled=true \
+         --set k8sServiceHost={cp_ip} \
+         --set k8sServicePort=6443 \
+         --set operator.replicas=1",
+        version = version,
+        cp_ip = cp_ip,
+    )
+}
+
+/// Returns the `--kernel <path>` arguments to pass to `container run` when a custom
+/// kernel path is set, or an empty Vec when using the system default (stock) kernel.
+///
+/// Used by all three node-creation fns (create_single_node, create_control_plane_node,
+/// create_worker_node) to inject the custom kernel into the node container run args.
+pub fn node_kernel_args(kernel_path: Option<&std::path::Path>) -> Vec<String> {
+    match kernel_path {
+        Some(path) => vec!["--kernel".to_string(), path.to_string_lossy().into_owned()],
+        None => vec![],
+    }
+}
+
+/// Resolve the effective kernel path: CLI flag takes precedence over the config default.
+///
+/// Mirrors the `select_cni` precedence model — CLI flag always wins over config default.
+/// Returns `None` when neither is set (stock kernel; no `--kernel` flag injected).
+pub fn select_kernel_path(
+    cli_flag: Option<std::path::PathBuf>,
+    config_default: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    cli_flag.or(config_default)
+}
+
+/// Build the kubeadm init argument list for node initialization.
+///
+/// When `full_ebpf` is true (custom kernel with kubeProxyReplacement=true), the
+/// `addon/kube-proxy` phase is skipped so kubeadm does not deploy kube-proxy.
+/// When `full_ebpf` is false (stock kernel), kube-proxy is retained.
+///
+/// The `--skip-phases=preflight` flag is always present (existing baseline);
+/// `--skip-phases=addon/kube-proxy` is added as a comma-joined extension under
+/// full-eBPF mode.
+pub fn build_kubeadm_init_args(full_ebpf: bool) -> Vec<String> {
+    if full_ebpf {
+        vec![
+            "--config=/kind/kubeadm.conf".to_string(),
+            "--skip-phases=preflight,addon/kube-proxy".to_string(),
+            "--v=1".to_string(),
+        ]
+    } else {
+        vec![
+            "--config=/kind/kubeadm.conf".to_string(),
+            "--skip-phases=preflight".to_string(),
+            "--v=1".to_string(),
+        ]
+    }
+}
+
+/// Resolve the effective CNI plugin: CLI flag takes precedence over the
+/// config file default when present.
+pub fn select_cni(cli_flag: Option<CniPlugin>, config_default: CniPlugin) -> CniPlugin {
+    cli_flag.unwrap_or(config_default)
+}
+
+/// Strategy for resolving the Apple Container CLI binary path.
+///
+/// `Which(name)` asks the shell PATH resolver (`which <name>`) — preferred
+/// because it respects the user's PATH ordering (e.g., brew-managed 1.0.0
+/// binary at /opt/homebrew/bin/container before a stale package-installer
+/// binary at /usr/local/bin/container).
+///
+/// `Hardcoded(path)` tries a known absolute path as a fallback for systems
+/// where the binary is not on PATH.
+pub enum CliPathStrategy {
+    /// Resolve via PATH (e.g., `which container`). The inner String is the
+    /// binary name to pass to `which`.
+    Which(String),
+    /// Try this absolute path directly.
+    Hardcoded(String),
+}
+
+/// Returns the ordered list of strategies detect_cli_path() uses to locate
+/// the Apple Container CLI binary.
+///
+/// ORDER CONTRACT: all Which(_) entries come before any Hardcoded(_) entry.
+/// This ensures brew/PATH-managed binaries (including the 1.0.0 release) are
+/// found before any stale package-installer binary that may still reside at
+/// /usr/local/bin/container on upgraded hosts.
+pub fn cli_path_candidates() -> Vec<CliPathStrategy> {
+    vec![
+        // PATH resolution first — respects the user's PATH, so brew/nix/mise-managed
+        // 1.0.0 binaries win over any stale /usr/local/bin/container left by older
+        // package installers.
+        CliPathStrategy::Which("container".to_string()),
+        CliPathStrategy::Which("apple-container".to_string()),
+        // Hardcoded fallbacks — tried only when PATH resolution finds nothing.
+        CliPathStrategy::Hardcoded("/opt/homebrew/bin/container".to_string()),
+        CliPathStrategy::Hardcoded("/opt/homebrew/bin/apple-container".to_string()),
+        CliPathStrategy::Hardcoded("/usr/local/bin/container".to_string()),
+        CliPathStrategy::Hardcoded("/usr/local/bin/apple-container".to_string()),
+        CliPathStrategy::Hardcoded(
+            "/System/Library/PrivateFrameworks/ContainerManager.framework/Versions/A/Resources/apple-container".to_string(),
+        ),
+    ]
+}
+
+/// Parse the version string from Apple Container CLI output.
+///
+/// Expects the format `container CLI version <version> (build: ..., commit: ...)`.
+/// The token after `"CLI version "` must start with a digit (semver major).
+/// Returns `Ok(version_string)` on success, `Err` if the expected token is absent
+/// or does not start with a digit.
+pub fn parse_version_output(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    // Require the specific "CLI version " prefix used by Apple Container so that
+    // arbitrary strings containing the word "version" do not accidentally parse.
+    if let Some(pos) = trimmed.find("CLI version ") {
+        let after_version = &trimmed[pos + "CLI version ".len()..];
+        let version = after_version
+            .split_whitespace()
+            .next()
+            .unwrap_or(after_version);
+        if version.is_empty() || !version.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            return Err(anyhow::anyhow!(
+                "Could not parse Apple Container CLI version from output: {}",
+                trimmed
+            ));
+        }
+        debug!("Detected Apple Container CLI version: {}", version);
+        return Ok(version.to_string());
+    }
+    Err(anyhow::anyhow!(
+        "Could not parse Apple Container CLI version from output: {}",
+        trimmed
+    ))
+}
+
+/// Validate that `version` meets MIN_VERSION (1.0.0).
+///
+/// Returns `Err` with migration guidance if the version is too old;
+/// returns `Ok(())` if the version is at or above the minimum.
+pub fn validate_version(version: &str) -> Result<()> {
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() < 2 {
+        return Err(anyhow::anyhow!(
+            "Invalid Apple Container CLI version format: {}",
+            version
+        ));
+    }
+
+    let major = parts[0]
+        .parse::<u32>()
+        .context("Invalid major version number")?;
+    let minor = parts[1]
+        .parse::<u32>()
+        .context("Invalid minor version number")?;
+    let patch = parts
+        .get(2)
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    let (min_major, min_minor, min_patch) = MIN_VERSION;
+    let meets_minimum = (major, minor, patch) >= (min_major, min_minor, min_patch);
+
+    if !meets_minimum {
+        return Err(anyhow::anyhow!(
+            "Apple Container CLI version {} is not supported. \
+             Minimum required version is {}.{}.{}.\n\
+             Migration to 1.0.0 requires these changes:\n\
+             - config.toml replaces 'container system property get/set/clear' \
+               (UserDefaults-backed properties removed; write values to \
+               ~/.config/container/config.toml and restart the service)\n\
+             - structured 'container ls/inspect' output shape changed \
+               (.status is now an object; networks moved to .status.networks; \
+               ipv4Address replaces address)\n\
+             - default Linux capability set (cap) reduced since 0.12.0; \
+               use --cap-add to restore capabilities needed by workloads\n\
+             Please upgrade Apple Container to 1.0.0 or later to continue.\n\
+             See: https://github.com/apple/container/releases",
+            version,
+            min_major,
+            min_minor,
+            min_patch
+        ));
+    }
+
+    info!(
+        "Apple Container CLI version {} meets minimum requirement ({}.{}.{})",
+        version, min_major, min_minor, min_patch
+    );
+    Ok(())
+}
+
+/// A container entry parsed from `container list --format json` (1.0.0 shape).
+#[derive(Debug)]
+pub struct ParsedContainer {
+    /// Top-level `id` field (same as `configuration.id`).
+    pub id: String,
+    /// Labels from `configuration.labels`.
+    pub labels: HashMap<String, String>,
+    /// State string from `status.state` (e.g., `"running"`, `"stopped"`).
+    pub state: String,
+    /// Bare IPv4 address from `status.networks[0].ipv4Address` with the CIDR
+    /// suffix stripped (e.g., `"192.168.65.2"` not `"192.168.65.2/24"`).
+    /// `None` when the container has no network attachment.
+    pub ipv4: Option<String>,
+}
+
+/// Parse the JSON output of `container list --format json` using the 1.0.0 shape.
+///
+/// Returns `Ok(vec![])` for empty or whitespace-only input.
+/// Returns `Err` for malformed JSON or if the top-level value is not an array.
+pub fn parse_container_list(json: &str) -> Result<Vec<ParsedContainer>> {
+    if json.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(json).context("Failed to parse container list JSON")?;
+
+    let array = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("Expected a JSON array at top level"))?;
+
+    let mut result = Vec::with_capacity(array.len());
+
+    for elem in array {
+        // Top-level "id"
+        let id = elem
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // configuration.labels -> HashMap
+        let labels: HashMap<String, String> = elem
+            .get("configuration")
+            .and_then(|c| c.get("labels"))
+            .and_then(|l| l.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // status.state
+        let state = elem
+            .get("status")
+            .and_then(|s| s.get("state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // status.networks[0].ipv4Address with CIDR stripped
+        let ipv4 = elem
+            .get("status")
+            .and_then(|s| s.get("networks"))
+            .and_then(|n| n.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|net| net.get("ipv4Address"))
+            .and_then(|v| v.as_str())
+            .map(|cidr| cidr.split('/').next().unwrap_or(cidr).to_string());
+
+        result.push(ParsedContainer {
+            id,
+            labels,
+            state,
+            ipv4,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Returns the capability arguments required for Kubernetes node containers.
+///
+/// Apple Container has no privileged-mode flag. Since 0.12.0 the default
+/// capability set is reduced to 14 Docker-style caps — insufficient for
+/// systemd, kubeadm, kubelet, containerd, and Cilium eBPF. Use `--cap-add ALL`
+/// (equivalent to KIND's privileged mode) so the node can run the full k8s stack.
+pub fn node_cap_args() -> Vec<&'static str> {
+    vec!["--cap-add", "ALL"]
+}
+
+/// Generate kubeadm init configuration YAML (v1beta4, K8s v1.35.5).
+///
+/// Emits three stanzas separated by "---":
+///   1. InitConfiguration  — advertise address, criSocket, kubeletExtraArgs (list form)
+///   2. ClusterConfiguration — kubernetesVersion v1.35.5, apiServer/controllerManager extraArgs (list form)
+///   3. JoinConfiguration  — criSocket, kubeletExtraArgs (list form)
+///
+/// Followed by KubeletConfiguration and KubeProxyConfiguration stanzas.
+///
+/// The map→list migration for kubeletExtraArgs and extraArgs mirrors
+/// PR #14 (vinnie357/kina) which adopted the kubeadm v1beta4 list form.
+pub fn generate_kubeadm_init_config(
+    container_name: &str,
+    vm_ip: &str,
+    cluster_name: &str,
+) -> String {
+    format!(
+        r#"apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{vm_ip}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.35.5
+clusterName: "{cluster_name}"
+controlPlaneEndpoint: "{vm_ip}:6443"
+apiServer:
+  certSANs:
+  - "{vm_ip}"
+  - "{container_name}"
+  - "localhost"
+  - "127.0.0.1"
+  extraArgs:
+  - name: runtime-config
+    value: "api/all=true"
+networking:
+  serviceSubnet: "10.96.0.0/16"
+  podSubnet: "10.244.0.0/16"
+  dnsDomain: "cluster.local"
+controllerManager:
+  extraArgs:
+  - name: enable-hostpath-provisioner
+    value: "true"
+scheduler: {{}}
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{vm_ip}"
+  - name: provider-id
+    value: "kind://docker/{cluster_name}/{container_name}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+failSwapOn: false
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+authorization:
+  mode: Webhook
+serverTLSBootstrap: true
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+bindAddress: "0.0.0.0"
+healthzBindAddress: "0.0.0.0:10256"
+metricsBindAddress: "0.0.0.0:10249"
+clusterCIDR: "10.244.0.0/16"
+"#,
+    )
+}
+
+/// Generate kubeadm worker-join configuration YAML (v1beta4).
+///
+/// Emits a JoinConfiguration stanza with kubeletExtraArgs in list form,
+/// followed by a KubeletConfiguration stanza.
+///
+/// The map→list migration mirrors PR #14 (vinnie357/kina).
+pub fn generate_worker_join_config(
+    _worker_name: &str,
+    worker_ip: &str,
+    join_info: &KubeadmJoinInfo,
+) -> String {
+    format!(
+        r#"apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "{endpoint}"
+    token: "{token}"
+    caCertHashes:
+    - "{hash}"
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+  - name: node-ip
+    value: "{worker_ip}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+failSwapOn: false
+"#,
+        endpoint = join_info.control_plane_endpoint,
+        token = join_info.token,
+        hash = join_info.ca_cert_hash,
+        worker_ip = worker_ip,
+    )
+}
 
 /// Client for interacting with Apple Container
 pub struct AppleContainerClient {
@@ -30,7 +558,7 @@ impl AppleContainerClient {
         };
 
         let container_version = Self::detect_version(&cli_path)?;
-        Self::validate_version(&container_version)?;
+        validate_version(&container_version)?;
 
         Ok(Self {
             config: config.clone(),
@@ -59,103 +587,32 @@ impl AppleContainerClient {
             ));
         }
 
-        // Parse version from output like: "container CLI version 0.5.0 (build: release, commit: 48230f3)"
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let version_str = stdout.trim();
-
-        // Look for the version number after "version "
-        if let Some(pos) = version_str.find("version ") {
-            let after_version = &version_str[pos + "version ".len()..];
-            // Take everything up to the next space or end of string
-            let version = after_version
-                .split_whitespace()
-                .next()
-                .unwrap_or(after_version);
-            debug!("Detected Apple Container CLI version: {}", version);
-            return Ok(version.to_string());
-        }
-
-        Err(anyhow::anyhow!(
-            "Could not parse Apple Container CLI version from output: {}",
-            version_str
-        ))
+        parse_version_output(stdout.trim())
     }
 
-    /// Validate that the detected version meets the minimum requirement
-    fn validate_version(version: &str) -> Result<()> {
-        let parts: Vec<&str> = version.split('.').collect();
-        if parts.len() < 2 {
-            return Err(anyhow::anyhow!(
-                "Invalid Apple Container CLI version format: {}",
-                version
-            ));
-        }
-
-        let major = parts[0]
-            .parse::<u32>()
-            .context("Invalid major version number")?;
-        let minor = parts[1]
-            .parse::<u32>()
-            .context("Invalid minor version number")?;
-        let patch = parts
-            .get(2)
-            .and_then(|p| p.parse::<u32>().ok())
-            .unwrap_or(0);
-
-        let (min_major, min_minor, min_patch) = MIN_VERSION;
-
-        let meets_minimum = (major, minor, patch) >= (min_major, min_minor, min_patch);
-
-        if !meets_minimum {
-            return Err(anyhow::anyhow!(
-                "Apple Container CLI version {} is not supported. \
-                 Minimum required version is {}.{}.{}.\n\
-                 Breaking changes in 0.5.0:\n\
-                 - 'container images' replaced by 'container image'\n\
-                 - Keychain ID changed to 'com.apple.container.registry'\n\
-                 - System properties consolidated to 'container system property'\n\
-                 Please upgrade Apple Container to continue.",
-                version,
-                min_major,
-                min_minor,
-                min_patch
-            ));
-        }
-
-        info!(
-            "Apple Container CLI version {} meets minimum requirement ({}.{}.{})",
-            version, min_major, min_minor, min_patch
-        );
-        Ok(())
-    }
-
-    /// Detect Apple Container CLI path
+    /// Detect Apple Container CLI path.
+    ///
+    /// Delegates to `cli_path_candidates()` to enforce the PATH-first ordering
+    /// contract: brew/nix/mise-managed binaries resolve before any stale
+    /// package-installer binary that may remain at /usr/local/bin/container.
     fn detect_cli_path() -> Result<String> {
-        // Check specific paths first to avoid conflicts with system commands
-        let specific_paths = [
-            "/usr/local/bin/container",
-            "/opt/homebrew/bin/container",
-            "/usr/local/bin/apple-container",
-            "/opt/homebrew/bin/apple-container",
-            "/System/Library/PrivateFrameworks/ContainerManager.framework/Versions/A/Resources/apple-container",
-        ];
-
-        for path in &specific_paths {
-            if std::path::Path::new(path).exists() {
-                info!("Found Apple Container CLI at: {}", path);
-                return Ok(path.to_string());
-            }
-        }
-
-        // Only search PATH for container names, avoiding system commands like 'ac'
-        let possible_names = ["container", "apple-container"];
-
-        for name in &possible_names {
-            if let Ok(output) = std::process::Command::new("which").arg(name).output() {
-                if output.status.success() {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        info!("Found Apple Container CLI at: {}", path);
+        for strategy in cli_path_candidates() {
+            match strategy {
+                CliPathStrategy::Which(name) => {
+                    if let Ok(output) = std::process::Command::new("which").arg(&name).output() {
+                        if output.status.success() {
+                            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if !path.is_empty() {
+                                info!("Found Apple Container CLI via PATH: {}", path);
+                                return Ok(path);
+                            }
+                        }
+                    }
+                }
+                CliPathStrategy::Hardcoded(path) => {
+                    if std::path::Path::new(&path).exists() {
+                        info!("Found Apple Container CLI at hardcoded path: {}", path);
                         return Ok(path);
                     }
                 }
@@ -175,6 +632,11 @@ impl AppleContainerClient {
         );
 
         let worker_count = options.workers.unwrap_or(0);
+        // Resolve the effective CNI plugin: CLI flag overrides config default.
+        let cni = select_cni(
+            Some(options.cni_plugin.clone()),
+            self.config.cluster.default_cni.clone(),
+        );
 
         if worker_count == 0 {
             // Single-node cluster with combined control-plane/worker roles
@@ -183,8 +645,14 @@ impl AppleContainerClient {
                 "Creating single-node cluster with combined roles: {}",
                 node_name
             );
-            self.create_single_node(&options.name, &node_name, &options.image)
-                .await?;
+            self.create_single_node(
+                &options.name,
+                &node_name,
+                &options.image,
+                cni,
+                options.node_kernel_path.as_deref(),
+            )
+            .await?;
         } else {
             // Multi-node cluster: 1 control-plane + N workers
             info!(
@@ -207,9 +675,21 @@ impl AppleContainerClient {
     ) -> Result<()> {
         let cp_name = format!("{}-control-plane", options.name);
 
+        // Resolve the effective CNI plugin: CLI flag (options.cni_plugin) overrides config default.
+        let cni = select_cni(
+            Some(options.cni_plugin.clone()),
+            self.config.cluster.default_cni.clone(),
+        );
+
         // 1. Create control-plane container
-        self.create_control_plane_node(&options.name, &cp_name, &options.image, true)
-            .await?;
+        self.create_control_plane_node(
+            &options.name,
+            &cp_name,
+            &options.image,
+            true,
+            options.node_kernel_path.as_deref(),
+        )
+        .await?;
 
         // 2. Wait for control-plane container to be ready and get IP
         self.wait_for_container_ready(&cp_name).await?;
@@ -218,7 +698,12 @@ impl AppleContainerClient {
 
         // 3. Initialize Kubernetes on control-plane and get join info
         let join_info = self
-            .initialize_kubernetes_cluster_with_join_info(&cp_name, &cp_ip, &options.name)
+            .initialize_kubernetes_cluster_with_join_info(
+                &cp_name,
+                &cp_ip,
+                &options.name,
+                options.node_kernel_path.as_deref(),
+            )
             .await?;
 
         // 4. Setup kubeconfig early (user gets kubectl access even if workers fail)
@@ -226,7 +711,9 @@ impl AppleContainerClient {
             .await?;
 
         // 5. Install CNI on control-plane (must be before workers join)
-        self.install_cni_plugin(&cp_name).await?;
+        // Pass kernel_path so Cilium selects the full-eBPF or stock workaround profile.
+        self.install_cni_plugin(&cp_name, cni.clone(), options.node_kernel_path.as_deref())
+            .await?;
 
         // 6. Create and join worker nodes sequentially
         for i in 0..worker_count {
@@ -244,8 +731,13 @@ impl AppleContainerClient {
                 worker_name
             );
 
-            self.create_worker_node(&options.name, &worker_name, &options.image)
-                .await?;
+            self.create_worker_node(
+                &options.name,
+                &worker_name,
+                &options.image,
+                options.node_kernel_path.as_deref(),
+            )
+            .await?;
 
             self.wait_for_container_ready(&worker_name).await?;
             let worker_ip = self.get_container_ip(&worker_name).await?;
@@ -256,12 +748,45 @@ impl AppleContainerClient {
 
             // PTP CNI requires the config file on each node (it's not a DaemonSet).
             // Cilium deploys as a DaemonSet from the control-plane and auto-rolls to workers.
-            if matches!(
-                self.config.cluster.default_cni,
-                crate::config::CniPlugin::Ptp
-            ) {
+            // Use the resolved cni (via select_cni) so --cni flag is honoured per-worker too.
+            if matches!(cni, CniPlugin::Ptp) {
                 self.install_ptp_cni(&worker_name).await?;
             }
+        }
+
+        // After all workers have joined, re-run the Cilium readiness gate and then
+        // wait for all nodes to be Ready before reporting success.
+        if matches!(cni, CniPlugin::Cilium) {
+            info!("Re-running Cilium readiness gate after all workers joined");
+            let readiness_cmd =
+                "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
+            let mut cmd = std::process::Command::new(&self.cli_path);
+            cmd.args(["exec", &cp_name, "sh", "-c", readiness_cmd]);
+            let output = cmd
+                .output()
+                .context("Failed to run post-join Cilium readiness gate")?;
+            if !output.status.success() {
+                let diag = self.collect_cilium_diagnostics(&cp_name);
+                return Err(anyhow::anyhow!(
+                    "Cilium post-join readiness gate failed: {}\nDiagnostics:\n{}",
+                    String::from_utf8_lossy(&output.stderr),
+                    diag
+                ));
+            }
+        }
+
+        // Final gate: wait for all nodes to be Ready before reporting success.
+        info!("Waiting for all nodes to be Ready");
+        let node_wait_cmd =
+            "kubectl wait --for=condition=Ready node --all --timeout=300s --kubeconfig=/etc/kubernetes/admin.conf";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", &cp_name, "sh", "-c", node_wait_cmd]);
+        let output = cmd.output().context("Failed to run node readiness gate")?;
+        if !output.status.success() {
+            warn!(
+                "Node readiness gate timed out: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Note: Do NOT remove control-plane taint in multi-node mode.
@@ -274,6 +799,54 @@ impl AppleContainerClient {
         Ok(())
     }
 
+    /// Collect Cilium diagnostics for error reporting on install/readiness failure.
+    ///
+    /// Runs three diagnostic commands inside the container and returns their output
+    /// concatenated for inclusion in the error message:
+    /// - `cilium status` (bare, no --wait — captures current state snapshot)
+    /// - `kubectl -n kube-system get pods -o wide`
+    /// - `kubectl -n kube-system logs ds/cilium --tail=100`
+    fn collect_cilium_diagnostics(&self, container_name: &str) -> String {
+        let mut diag = String::new();
+
+        // 1. Bare cilium status (no --wait) for current state snapshot.
+        let status_cmd = "KUBECONFIG=/etc/kubernetes/admin.conf cilium status 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", status_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== cilium status ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        // 2. Pod list for kube-system namespace.
+        let pods_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system get pods -o wide 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", pods_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== kubectl -n kube-system get pods -o wide ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        // 3. Cilium DaemonSet logs.
+        let logs_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system logs ds/cilium --tail=100 2>&1 || true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", logs_cmd]);
+        if let Ok(out) = cmd.output() {
+            diag.push_str("=== kubectl -n kube-system logs ds/cilium --tail=100 ===\n");
+            diag.push_str(&String::from_utf8_lossy(&out.stdout));
+            diag.push_str(&String::from_utf8_lossy(&out.stderr));
+            diag.push('\n');
+        }
+
+        diag
+    }
+
     /// Create a single node with combined control-plane and worker roles
     /// Note: Required due to Apple Container VM communication limitation until macOS 26
     async fn create_single_node(
@@ -281,6 +854,8 @@ impl AppleContainerClient {
         cluster_name: &str,
         node_name: &str,
         image: &str,
+        cni: CniPlugin,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating single Kubernetes node '{}'", node_name);
 
@@ -309,6 +884,25 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
+
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack (etcd + apiserver + KCM + scheduler + Cilium agent +
+        // cilium-operator + Envoy DaemonSet + Hubble). OOM kills cascade into
+        // control-plane component crashes that look like TLS / leader-election failures.
+        // 4 GB is the minimum for a stable full-eBPF Cilium cluster.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+
+        // Inject custom kernel args when a kernel path is configured.
+        // node_kernel_args returns ["--kernel", "<path>"] or [] for stock kernel.
+        let kernel_args_owned = node_kernel_args(kernel_path);
+        let kernel_args_refs: Vec<&str> = kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&kernel_args_refs);
 
         // Note: No port mapping needed - Apple Container VM gets its own IP
         // Kubernetes API server will be accessible at <vm-ip>:6443
@@ -358,8 +952,8 @@ impl AppleContainerClient {
         let vm_ip = self.get_container_ip(node_name).await?;
         info!("Container '{}' running at IP: {}", node_name, vm_ip);
 
-        // Initialize Kubernetes cluster
-        self.initialize_kubernetes_cluster(node_name, &vm_ip)
+        // Initialize Kubernetes cluster (kernel_path determines full-eBPF vs stock kubeadm profile)
+        self.initialize_kubernetes_cluster(node_name, &vm_ip, kernel_path)
             .await?;
 
         // Generate and save kubeconfig immediately after cluster init
@@ -371,8 +965,9 @@ impl AppleContainerClient {
         self.remove_control_plane_taint(node_name).await?;
 
         // Install CNI plugin (now user has kubectl access if this fails)
-        // Use default CNI from config for now - will be configurable in future updates
-        self.install_cni_plugin(node_name).await?;
+        // Use the resolved CNI plugin (CLI flag overrides config default).
+        // Pass kernel_path so Cilium selects the full-eBPF or stock workaround profile.
+        self.install_cni_plugin(node_name, cni, kernel_path).await?;
 
         info!(
             "Kubernetes cluster '{}' initialized successfully",
@@ -388,6 +983,7 @@ impl AppleContainerClient {
         node_name: &str,
         image: &str,
         is_primary: bool,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating control plane node '{}'", node_name);
 
@@ -417,6 +1013,22 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
+
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack. See single-node creation comment for rationale.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+
+        // Inject custom kernel args when a kernel path is configured.
+        let cp_kernel_args_owned = node_kernel_args(kernel_path);
+        let cp_kernel_args_refs: Vec<&str> =
+            cp_kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&cp_kernel_args_refs);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -456,6 +1068,7 @@ impl AppleContainerClient {
         cluster_name: &str,
         node_name: &str,
         image: &str,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating worker node '{}'", node_name);
 
@@ -479,6 +1092,22 @@ impl AppleContainerClient {
 
         // Add tmpfs mounts for systemd in VM
         args.extend_from_slice(&["--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/run/lock"]);
+
+        // Add required capabilities for Kubernetes node workloads.
+        // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
+        // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
+        args.extend_from_slice(&node_cap_args());
+
+        // Resource allocation: 4 CPUs and 4 GB memory per node.
+        // The Apple Container default (4 vCPUs / 1024 MB) is insufficient for a full
+        // kube-system stack. See single-node creation comment for rationale.
+        args.extend_from_slice(&["--cpus", "4", "--memory", "4g"]);
+
+        // Inject custom kernel args when a kernel path is configured.
+        let wk_kernel_args_owned = node_kernel_args(kernel_path);
+        let wk_kernel_args_refs: Vec<&str> =
+            wk_kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&wk_kernel_args_refs);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -674,87 +1303,65 @@ impl AppleContainerClient {
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!("Apple Container ps output: {}", stdout);
 
-        // Parse JSON output to find kina clusters
-        let containers: Vec<serde_json::Value> = if stdout.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(&stdout).context("Failed to parse Apple Container JSON output")?
-        };
+        // Parse JSON output using the 1.0.0 shape helper
+        let parsed =
+            parse_container_list(&stdout).context("Failed to parse Apple Container JSON output")?;
 
-        let mut clusters = HashMap::new();
+        let mut clusters: HashMap<String, ClusterInfo> = HashMap::new();
 
-        for container in containers {
-            // Check if this container has kina cluster labels
-            if let Some(labels) = container
-                .get("configuration")
-                .and_then(|c| c.get("labels"))
-                .and_then(|l| l.as_object())
-            {
-                if let Some(cluster_name) = labels.get("io.kina.cluster").and_then(|v| v.as_str()) {
-                    let role = labels
-                        .get("io.kina.role")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+        for container in parsed {
+            // Only include containers managed by kina (must have io.kina.cluster label)
+            if let Some(cluster_name) = container.labels.get("io.kina.cluster") {
+                let role = container
+                    .labels
+                    .get("io.kina.role")
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
 
-                    let container_name = container
-                        .get("configuration")
-                        .and_then(|c| c.get("id"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                let image = container
+                    .labels
+                    .get("io.kina.image")
+                    .map(|s| s.as_str())
+                    .unwrap_or("kindest/node:latest");
 
-                    let state = container
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                let state = &container.state;
+                let ip_address = container.ipv4.clone();
+                let container_name = container.id.clone();
 
-                    // Extract IP address from container networks
-                    let ip_address = container
-                        .get("networks")
-                        .and_then(|networks| networks.as_array())
-                        .and_then(|networks| networks.first())
-                        .and_then(|network| network.get("address"))
-                        .and_then(|addr| addr.as_str())
-                        .map(|addr| addr.split('/').next().unwrap_or(addr).to_string());
+                // Group containers by cluster name
+                let cluster_info =
+                    clusters
+                        .entry(cluster_name.clone())
+                        .or_insert_with(|| ClusterInfo {
+                            name: cluster_name.clone(),
+                            image: image.to_string(),
+                            status: if state == "running" {
+                                ClusterStatus::Running
+                            } else {
+                                ClusterStatus::Stopped
+                            },
+                            nodes: Vec::new(),
+                            created: "unknown".to_string(),
+                            kubeconfig_path: None,
+                        });
 
-                    // Group containers by cluster name
-                    let cluster_info =
-                        clusters
-                            .entry(cluster_name.to_string())
-                            .or_insert_with(|| ClusterInfo {
-                                name: cluster_name.to_string(),
-                                image: labels
-                                    .get("io.kina.image")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("kindest/node:latest")
-                                    .to_string(),
-                                status: if state == "running" {
-                                    ClusterStatus::Running
-                                } else {
-                                    ClusterStatus::Stopped
-                                },
-                                nodes: Vec::new(),
-                                created: "unknown".to_string(), // Container format doesn't expose creation time easily
-                                kubeconfig_path: None,
-                            });
+                // Add node information
+                cluster_info.nodes.push(NodeInfo {
+                    name: container_name.clone(),
+                    role: if role.contains("control-plane") {
+                        NodeRole::ControlPlane
+                    } else {
+                        NodeRole::Worker
+                    },
+                    status: state.clone(),
+                    version: "unknown".to_string(),
+                    container_id: Some(container_name),
+                    ip_address,
+                });
 
-                    // Add node information
-                    cluster_info.nodes.push(NodeInfo {
-                        name: container_name.to_string(),
-                        role: if role.contains("control-plane") {
-                            NodeRole::ControlPlane
-                        } else {
-                            NodeRole::Worker
-                        },
-                        status: state.to_string(),
-                        version: "unknown".to_string(),
-                        container_id: Some(container_name.to_string()),
-                        ip_address,
-                    });
-
-                    // Update cluster status based on all containers
-                    if state != "running" {
-                        cluster_info.status = ClusterStatus::Stopped;
-                    }
+                // Update cluster status based on all containers
+                if state != "running" {
+                    cluster_info.status = ClusterStatus::Stopped;
                 }
             }
         }
@@ -1195,27 +1802,14 @@ impl AppleContainerClient {
             if let Ok(output) = cmd.output() {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    if let Ok(containers) = serde_json::from_str::<Vec<serde_json::Value>>(&stdout)
-                    {
+                    if let Ok(containers) = parse_container_list(&stdout) {
                         for container in containers {
-                            if let Some(id) = container
-                                .get("configuration")
-                                .and_then(|c| c.get("id"))
-                                .and_then(|v| v.as_str())
-                            {
-                                if id == container_name {
-                                    if let Some(status) =
-                                        container.get("status").and_then(|v| v.as_str())
-                                    {
-                                        if status == "running" {
-                                            debug!(
-                                                "Container '{}' is running after {} attempts",
-                                                container_name, attempt
-                                            );
-                                            return Ok(());
-                                        }
-                                    }
-                                }
+                            if container.id == container_name && container.state == "running" {
+                                debug!(
+                                    "Container '{}' is running after {} attempts",
+                                    container_name, attempt
+                                );
+                                return Ok(());
                             }
                         }
                     }
@@ -1249,24 +1843,13 @@ impl AppleContainerClient {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let containers: Vec<serde_json::Value> =
-            serde_json::from_str(&stdout).context("Failed to parse container list JSON")?;
+        let containers =
+            parse_container_list(&stdout).context("Failed to parse container list JSON")?;
 
         for container in containers {
-            if let Some(id) = container
-                .get("configuration")
-                .and_then(|c| c.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                if id == container_name {
-                    if let Some(networks) = container.get("networks").and_then(|v| v.as_array()) {
-                        if let Some(network) = networks.first() {
-                            if let Some(address) = network.get("address").and_then(|v| v.as_str()) {
-                                let ip = address.split('/').next().unwrap_or(address);
-                                return Ok(ip.to_string());
-                            }
-                        }
-                    }
+            if container.id == container_name {
+                if let Some(ip) = container.ipv4 {
+                    return Ok(ip);
                 }
             }
         }
@@ -1277,86 +1860,28 @@ impl AppleContainerClient {
         ))
     }
 
-    /// Generate kubeadm init configuration YAML
+    /// Generate kubeadm init configuration YAML (method wrapper for compatibility)
     fn generate_kubeadm_init_config(
         &self,
         container_name: &str,
         vm_ip: &str,
         cluster_name: &str,
     ) -> String {
-        format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
-kind: InitConfiguration
-localAPIEndpoint:
-  advertiseAddress: "{vm_ip}"
-  bindPort: 6443
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
----
-apiVersion: kubeadm.k8s.io/v1beta3
-kind: ClusterConfiguration
-kubernetesVersion: v1.31.0
-clusterName: "{cluster_name}"
-controlPlaneEndpoint: "{vm_ip}:6443"
-apiServer:
-  certSANs:
-  - "{vm_ip}"
-  - "{container_name}"
-  - "localhost"
-  - "127.0.0.1"
-  extraArgs:
-    runtime-config: "api/all=true"
-networking:
-  serviceSubnet: "10.96.0.0/16"
-  podSubnet: "10.244.0.0/16"
-  dnsDomain: "cluster.local"
-controllerManager:
-  extraArgs:
-    enable-hostpath-provisioner: "true"
-scheduler: {{}}
-etcd:
-  local:
-    dataDir: "/var/lib/etcd"
----
-apiVersion: kubeadm.k8s.io/v1beta3
-kind: JoinConfiguration
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{vm_ip}"
-    provider-id: "kind://docker/{cluster_name}/{container_name}"
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: systemd
-failSwapOn: false
-authentication:
-  anonymous:
-    enabled: false
-  webhook:
-    enabled: true
-authorization:
-  mode: Webhook
-serverTLSBootstrap: true
----
-apiVersion: kubeproxy.config.k8s.io/v1alpha1
-kind: KubeProxyConfiguration
-bindAddress: "0.0.0.0"
-healthzBindAddress: "0.0.0.0:10256"
-metricsBindAddress: "0.0.0.0:10249"
-clusterCIDR: "10.244.0.0/16"
-"#,
-        )
+        generate_kubeadm_init_config(container_name, vm_ip, cluster_name)
     }
 
-    /// Write kubeadm config and run kubeadm init in a container
+    /// Write kubeadm config and run kubeadm init in a container.
+    ///
+    /// When `full_ebpf` is true (custom kernel + kubeProxyReplacement=true), passes
+    /// `--skip-phases=preflight,addon/kube-proxy` so kubeadm does not deploy kube-proxy.
+    /// When false (stock kernel), only `--skip-phases=preflight` is passed.
+    ///
+    /// Uses `build_kubeadm_init_args(full_ebpf)` to build the argument list.
     fn run_kubeadm_init(
         &self,
         container_name: &str,
         kubeadm_config: &str,
+        full_ebpf: bool,
     ) -> Result<std::process::Output> {
         // Write kubeadm config to container
         let mut cmd = std::process::Command::new(&self.cli_path);
@@ -1377,24 +1902,29 @@ clusterCIDR: "10.244.0.0/16"
             ));
         }
 
-        // Initialize cluster with kubeadm
+        // Initialize cluster with kubeadm using the computed arg list.
+        // build_kubeadm_init_args handles the kube-proxy skip for full-eBPF mode.
+        let kubeadm_args = build_kubeadm_init_args(full_ebpf);
+
         let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args([
-            "exec",
-            container_name,
-            "kubeadm",
-            "init",
-            "--config=/kind/kubeadm.conf",
-            "--skip-phases=preflight",
-            "--v=1",
-        ]);
+        let mut exec_args = vec!["exec", container_name, "kubeadm", "init"];
+        let arg_refs: Vec<&str> = kubeadm_args.iter().map(|s| s.as_str()).collect();
+        exec_args.extend_from_slice(&arg_refs);
+        cmd.args(&exec_args);
 
         info!("Running kubeadm init (this may take a few minutes)...");
         cmd.output().context("Failed to run kubeadm init")
     }
 
-    /// Initialize Kubernetes cluster with kubeadm (single-node, no join info needed)
-    async fn initialize_kubernetes_cluster(&self, container_name: &str, vm_ip: &str) -> Result<()> {
+    /// Initialize Kubernetes cluster with kubeadm (single-node, no join info needed).
+    ///
+    /// `kernel_path`: when `Some`, the full-eBPF kubeadm profile is used (skip kube-proxy).
+    async fn initialize_kubernetes_cluster(
+        &self,
+        container_name: &str,
+        vm_ip: &str,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         info!(
             "Initializing Kubernetes cluster in container '{}'",
             container_name
@@ -1406,7 +1936,8 @@ clusterCIDR: "10.244.0.0/16"
             .unwrap_or(container_name);
 
         let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
-        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
+        let output =
+            self.run_kubeadm_init(container_name, &kubeadm_config, kernel_path.is_some())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1422,12 +1953,15 @@ clusterCIDR: "10.244.0.0/16"
         Ok(())
     }
 
-    /// Initialize Kubernetes cluster and extract join info for multi-node setup
+    /// Initialize Kubernetes cluster and extract join info for multi-node setup.
+    ///
+    /// `kernel_path`: when `Some`, the full-eBPF kubeadm profile is used (skip kube-proxy).
     async fn initialize_kubernetes_cluster_with_join_info(
         &self,
         container_name: &str,
         vm_ip: &str,
         cluster_name: &str,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<KubeadmJoinInfo> {
         info!(
             "Initializing Kubernetes cluster in container '{}' (multi-node)",
@@ -1435,7 +1969,8 @@ clusterCIDR: "10.244.0.0/16"
         );
 
         let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
-        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
+        let output =
+            self.run_kubeadm_init(container_name, &kubeadm_config, kernel_path.is_some())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1507,31 +2042,8 @@ clusterCIDR: "10.244.0.0/16"
     ) -> Result<()> {
         info!("Joining worker '{}' to cluster", worker_name);
 
-        // Write a JoinConfiguration YAML to the worker
-        let join_config = format!(
-            r#"apiVersion: kubeadm.k8s.io/v1beta3
-kind: JoinConfiguration
-discovery:
-  bootstrapToken:
-    apiServerEndpoint: "{endpoint}"
-    token: "{token}"
-    caCertHashes:
-    - "{hash}"
-nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  kubeletExtraArgs:
-    node-ip: "{worker_ip}"
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-cgroupDriver: systemd
-failSwapOn: false
-"#,
-            endpoint = join_info.control_plane_endpoint,
-            token = join_info.token,
-            hash = join_info.ca_cert_hash,
-            worker_ip = worker_ip,
-        );
+        // Write a JoinConfiguration YAML to the worker (v1beta4, list form for kubeletExtraArgs)
+        let join_config = generate_worker_join_config(worker_name, worker_ip, join_info);
 
         // Write join config to worker container
         let mut cmd = std::process::Command::new(&self.cli_path);
@@ -1621,11 +2133,23 @@ failSwapOn: false
         Ok(())
     }
 
-    /// Install CNI plugin based on configuration
-    async fn install_cni_plugin(&self, container_name: &str) -> Result<()> {
-        match self.config.cluster.default_cni {
-            crate::config::CniPlugin::Ptp => self.install_ptp_cni(container_name).await,
-            crate::config::CniPlugin::Cilium => self.install_cilium_cni(container_name).await,
+    /// Install CNI plugin based on the resolved plugin selection.
+    ///
+    /// `cni` is the result of `select_cni(options.cni_plugin, config.default_cni)` and
+    /// reflects the effective choice: CLI flag overrides config default.
+    ///
+    /// `kernel_path` determines which Cilium profile to use: when `Some`, the full-eBPF
+    /// profile (`build_cilium_install_cmd_ebpf`) is selected; when `None`, the stock
+    /// workaround profile (`build_cilium_install_cmd`) is used.
+    async fn install_cni_plugin(
+        &self,
+        container_name: &str,
+        cni: CniPlugin,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
+        match cni {
+            CniPlugin::Ptp => self.install_ptp_cni(container_name).await,
+            CniPlugin::Cilium => self.install_cilium_cni(container_name, kernel_path).await,
         }
     }
 
@@ -1695,50 +2219,154 @@ EOF"#,
         Ok(())
     }
 
-    /// Install Cilium CNI plugin using standard Cilium CLI
-    async fn install_cilium_cni(&self, container_name: &str) -> Result<()> {
-        info!("Installing Cilium CNI plugin using standard Cilium CLI");
+    /// Install Cilium CNI plugin using the pinned cilium-cli and topology-correct helm values.
+    ///
+    /// Uses [`build_cilium_cli_install_script`] and either [`build_cilium_install_cmd`] (stock
+    /// kernel workaround profile) or [`build_cilium_install_cmd_ebpf`] (full-eBPF profile for
+    /// nodes booted on the custom kina kernel) so the exact commands are unit-testable without
+    /// spawning containers.
+    ///
+    /// Profile selection: when `kernel_path` is `Some`, the full-eBPF profile is used (custom
+    /// kernel has all required BPF options). When `None`, the stock workaround profile is used.
+    ///
+    /// After `cilium install`, runs a readiness gate (`cilium status --wait --wait-duration 5m`)
+    /// with `KUBECONFIG=/etc/kubernetes/admin.conf`. On failure, captures diagnostics from
+    /// `cilium status` (bare), `kubectl -n kube-system get pods -o wide`, and
+    /// `kubectl -n kube-system logs ds/cilium --tail=100` and includes them in the error.
+    async fn install_cilium_cni(
+        &self,
+        container_name: &str,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
+        info!("Installing Cilium CNI plugin (pinned versions, topology-correct values)");
 
-        // Set up environment (use the kubeconfig that kubeadm created)
-        let kubeconfig_env = "export KUBECONFIG=/etc/kubernetes/admin.conf";
-
-        // First install the Cilium CLI (running as root in container, no sudo needed)
-        // Use arm64 architecture for Apple Silicon compatibility
-        let install_cli_cmd = r#"
-CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
-CLI_ARCH=arm64
-curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
-sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
-tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
-rm -f cilium-linux-${CLI_ARCH}.tar.gz cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
-"#;
+        // Step 1: Install the pinned cilium-cli binary inside the container.
+        // build_cilium_cli_install_script uses the pinned CILIUM_CLI_VERSION const —
+        // no runtime version-discovery curl.
+        let install_cli_cmd = build_cilium_cli_install_script(CILIUM_CLI_VERSION);
 
         let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args(["exec", container_name, "sh", "-c", install_cli_cmd]);
+        cmd.args(["exec", container_name, "sh", "-c", &install_cli_cmd]);
 
         let output = cmd.output().context("Failed to install Cilium CLI")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to install Cilium CLI: {}", stderr));
+            return Err(anyhow::anyhow!(
+                "Failed to install pinned cilium-cli {}: {}",
+                CILIUM_CLI_VERSION,
+                stderr
+            ));
         }
 
-        // Now install Cilium using the standard cilium install command with minimal Apple Container fix
-        // Disable local node route management to fix: "address family not supported by protocol"
-        let cilium_install_cmd = format!(
-            "{} && cilium install --version 1.18.2 --set enableLocalNodeRoute=false",
-            kubeconfig_env
-        );
+        info!("cilium-cli {} installed successfully", CILIUM_CLI_VERSION);
+
+        // Step 2: We need the control-plane VM IP to set k8sServiceHost.
+        // The container_name is the control-plane node; fetch its IP.
+        let cp_ip = self.get_container_ip(container_name).await?;
+
+        // Step 3: Install Cilium with topology-correct --set values.
+        // Profile selection: full-eBPF when custom kernel is set; stock workaround otherwise.
+        // build_cilium_install_cmd_ebpf (custom kernel) retires all workarounds.
+        // build_cilium_install_cmd (stock kernel) retains workarounds for kata-kernel gaps.
+        let cilium_install_cmd = if kernel_path.is_some() {
+            build_cilium_install_cmd_ebpf(CILIUM_VERSION, &cp_ip)
+        } else {
+            build_cilium_install_cmd(CILIUM_VERSION, &cp_ip)
+        };
 
         let mut cmd = std::process::Command::new(&self.cli_path);
         cmd.args(["exec", container_name, "sh", "-c", &cilium_install_cmd]);
 
-        let output = cmd.output().context("Failed to install Cilium")?;
+        let output = cmd.output().context("Failed to run cilium install")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("Failed to install Cilium: {}", stderr));
+            let diag = self.collect_cilium_diagnostics(container_name);
+            return Err(anyhow::anyhow!(
+                "Failed to install Cilium {}: {}\nDiagnostics:\n{}",
+                CILIUM_VERSION,
+                stderr,
+                diag
+            ));
         }
 
-        info!("Cilium CNI plugin installed successfully using standard installation");
+        info!(
+            "Cilium {} install command completed; running readiness gate",
+            CILIUM_VERSION
+        );
+
+        // Step 4a: Approve pending kubelet-serving CSRs before the readiness gate.
+        //
+        // kubeadm sets `serverTLSBootstrap: true` in the kubelet config, which means
+        // kubelet generates a serving certificate via a CertificateSigningRequest rather
+        // than using a self-signed cert. The CSR is pending until explicitly approved.
+        // Until approved, any API path that goes through the kubelet serving port (:10250)
+        // — including `cilium status --wait` probes that exec into pods via the kubelet API
+        // — fails with "remote error: tls: internal error".
+        //
+        // cilium-operator repeatedly loses leader election when those TLS handshakes fail,
+        // producing a 5-minute backoff cascade that outlasts the readiness gate duration.
+        //
+        // Fix: approve any pending kubelet CSRs right after `cilium install`, before the
+        // readiness gate. A 15-second wait gives kubelet time to submit its CSR after
+        // the CNI is initialized (Cilium sets up the pod network, kubelet comes up healthy,
+        // then submits). Errors are warned but not fatal — if no CSRs exist yet, the
+        // approve step is a no-op and the readiness gate will surface real failures.
+        info!("Approving pending kubelet-serving CSRs before readiness gate");
+        let csr_approve_cmd = "\
+            sleep 15 && \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr -o name 2>/dev/null | \
+            grep 'csr.node.eks.amazonaws.com\\|certificatesigningrequest' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr --no-headers 2>/dev/null | \
+            awk '/Pending/{print $1}' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", csr_approve_cmd]);
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                info!("Kubelet CSR approval step completed");
+            }
+            Ok(out) => {
+                warn!(
+                    "Kubelet CSR approval step returned non-zero (may be no CSRs yet): {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                warn!("Failed to run kubelet CSR approval step (non-fatal): {}", e);
+            }
+        }
+
+        // Step 4b: Readiness gate — wait until Cilium reports healthy.
+        // Bounded to 5 minutes; fail fast with diagnostics if exceeded.
+        // CSRs are now approved so cilium-operator kubelet API calls can complete TLS.
+        let readiness_cmd =
+            "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", readiness_cmd]);
+
+        let output = cmd
+            .output()
+            .context("Failed to run Cilium readiness gate")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let diag = self.collect_cilium_diagnostics(container_name);
+            return Err(anyhow::anyhow!(
+                "Cilium readiness gate failed (cilium status --wait --wait-duration 5m): {}\nDiagnostics:\n{}",
+                stderr,
+                diag
+            ));
+        }
+
+        info!(
+            "Cilium CNI plugin installed and ready (version {})",
+            CILIUM_VERSION
+        );
         Ok(())
     }
 

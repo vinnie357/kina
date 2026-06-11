@@ -69,6 +69,10 @@ tempfile.workspace = true
 # Unix system calls (for TTY detection)
 libc.workspace = true
 
+# Cryptographic hashing
+sha2.workspace = true
+hex.workspace = true
+
 [dev-dependencies]
 assert_cmd.workspace = true
 predicates.workspace = true

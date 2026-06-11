@@ -8,7 +8,7 @@ KINA_DATA_DIR = "$HOME/.local/share/kina"
 rust = "stable"
 kubectx = "latest"
 kubens = "latest"
-cilium-cli = "latest"
+cilium-cli = "0.19.4"
 "ubi:nushell/nushell" = { version = "0.108.0", exe = "nu" }
 act = "0.2.82"
 "github:steveyegge/beads" = "0.49.0"
@@ -116,7 +116,7 @@ run = "nu scripts/test-cluster.nu"
 timeout = "10m"
 
 [tasks."test:cluster:multi"]
-description = "Create multi-node integration test cluster (1 control-plane + 2 workers)"
+description = "Create multi-node integration test cluster (1 control-plane + 2 workers). Env: KINA_TEST_CNI (ptp|cilium, default ptp), KINA_TEST_KERNEL_PATH (path to custom kernel, optional)"
 run = "nu scripts/test-cluster-multi.nu"
 timeout = "15m"
 

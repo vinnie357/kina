@@ -52,7 +52,7 @@ dirs = "5.0"
 tokio-process = "0.2"
 
 # Network and HTTP
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "blocking"] }
 url = "2.4"
 
 # Kubernetes Client (for future use)
@@ -69,3 +69,7 @@ predicates = "3.0"
 
 # Unix system calls (for TTY detection)
 libc = "0.2"
+
+# Cryptographic hashing (sha256 for kernel verification)
+sha2 = "0.10"
+hex = "0.4"

@@ -6,7 +6,12 @@ use tracing::{info, warn};
 
 use crate::config::{CniPlugin, Config};
 use crate::core::cluster::ClusterManager;
-use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions};
+use crate::core::kernel_fetch;
+use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions, NodeRole};
+use crate::core::verify::{
+    aggregate_verify, http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url,
+    render_demo_manifest, ProbeResult,
+};
 
 /// Create a new Kubernetes cluster
 #[derive(Args)]
@@ -16,7 +21,7 @@ pub struct CreateArgs {
     pub name: String,
 
     /// Container image to use for the cluster
-    #[arg(long, default_value = "kindest/node:v1.31.0")]
+    #[arg(long, default_value = "kindest/node:v1.35.5")]
     pub image: String,
 
     /// Configuration file for cluster creation
@@ -42,6 +47,14 @@ pub struct CreateArgs {
     /// CNI plugin to use (ptp or cilium)
     #[arg(long, value_enum, default_value = "ptp")]
     pub cni: CniPluginArg,
+
+    /// Path to a custom Linux kernel for node containers.
+    /// When set, kina passes `--kernel <PATH>` to every node `container run` invocation,
+    /// booting nodes on the custom kernel without mutating the system kernel.
+    /// When omitted, the system default (stock) kernel is used.
+    /// Backed by node_kernel_path (resolved via select_kernel_path precedence).
+    #[arg(long = "kernel-path", value_name = "PATH")]
+    pub node_kernel_path: Option<PathBuf>,
 }
 
 /// Delete a Kubernetes cluster
@@ -179,16 +192,16 @@ pub enum AddonType {
     /// NGINX Ingress Controller (nginx.org)
     #[value(name = "nginx-ingress")]
     NginxIngress,
-    /// Ingress NGINX Controller (kubernetes community)
-    #[value(name = "ingress-nginx")]
-    IngressNginx,
-    /// CNI plugins
-    Cni,
-    /// CoreDNS
-    Coredns,
-    /// Metrics server
-    #[value(name = "metrics-server")]
-    MetricsServer,
+    /// Demo application (kina-demo-app with ingress)
+    #[value(name = "demo-app")]
+    DemoApp,
+}
+
+/// Verify a cluster's health end-to-end
+#[derive(Args)]
+pub struct VerifyArgs {
+    /// Name of the cluster to verify (optional — auto-detects if only one cluster exists)
+    pub cluster: Option<String>,
 }
 
 impl CreateArgs {
@@ -196,6 +209,116 @@ impl CreateArgs {
         info!("Creating cluster '{}'", self.name);
 
         let cluster_manager = ClusterManager::new(config)?;
+
+        // Resolve the kernel path, applying the zero-step default for --cni cilium.
+        //
+        // Precedence:
+        //   1. --kernel-path flag (explicit, always wins)
+        //   2. Cached pinned kernel in ~/.kina/kernels/<tag>/vmlinux (silent reuse)
+        //   3. Auto-download the pinned kernel (first-run notice printed)
+        //   4. Hard error with --kernel-path escape hatch (offline / unreachable)
+        //
+        // PTP and other CNI plugins use the stock kernel; kernel_fetch is never invoked.
+        let cni_plugin: CniPlugin = self.cni.clone().into();
+        let node_kernel_path = if kernel_fetch::requires_kernel(&cni_plugin) {
+            // Check whether the pinned kernel is already cached.
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let pinned_cache = kernel_fetch::kernel_cache_file(&home, &config.kernel.tag);
+            let cached_verified = if pinned_cache.exists() {
+                // Verify sha256 of the cached file before trusting it.
+                let file_sha = std::fs::read(&pinned_cache).ok().map(|bytes| {
+                    use sha2::{Digest, Sha256};
+                    hex::encode(Sha256::digest(&bytes))
+                });
+                file_sha
+                    .map(|sha| kernel_fetch::verify_sha256(&sha, &config.kernel.sha256))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            let cached_pinned = if cached_verified {
+                Some(pinned_cache.clone())
+            } else {
+                None
+            };
+
+            match kernel_fetch::resolve_kernel_for_cilium(
+                self.node_kernel_path.clone(),
+                cached_pinned,
+                true, // fetch_ok: assume online; download errors surface via install_kernel
+            ) {
+                Ok(kernel_fetch::KernelChoice::ExplicitPath(p)) => Some(p),
+                Ok(kernel_fetch::KernelChoice::CachedPinned(p)) => {
+                    info!("Using cached pinned kernel: {}", p.display());
+                    Some(p)
+                }
+                Ok(kernel_fetch::KernelChoice::FetchPinned) => {
+                    // First run: print notice and download the pinned kernel.
+                    let notice = kernel_fetch::first_run_notice(
+                        &config.kernel.tag,
+                        kernel_fetch::KERNEL_SIZE_BYTES,
+                    );
+                    println!("{}", notice);
+
+                    let cache_dir = kernel_fetch::kernel_cache_dir(&home, &config.kernel.tag);
+                    // Use pinned_download_url() — the GitHub release asset is named "Image",
+                    // not "vmlinux".  The downloaded bytes are stored locally as "vmlinux"
+                    // by install_kernel via kernel_cache_file.
+                    let url = kernel_fetch::pinned_download_url();
+
+                    struct HttpFetcher;
+                    impl kernel_fetch::KernelFetcher for HttpFetcher {
+                        fn fetch(
+                            &self,
+                            url: &str,
+                            dest_tmp: &std::path::Path,
+                        ) -> Result<u64, String> {
+                            // Synchronous download via reqwest blocking client.
+                            let mut response = reqwest::blocking::get(url)
+                                .map_err(|e| format!("HTTP request failed: {}", e))?;
+                            if !response.status().is_success() {
+                                return Err(format!(
+                                    "HTTP {} downloading {}",
+                                    response.status(),
+                                    url
+                                ));
+                            }
+                            let mut file = std::fs::File::create(dest_tmp)
+                                .map_err(|e| format!("cannot create temp file: {}", e))?;
+                            let bytes = std::io::copy(&mut response, &mut file)
+                                .map_err(|e| format!("write error: {}", e))?;
+                            Ok(bytes)
+                        }
+                    }
+
+                    let fetcher = HttpFetcher;
+                    match kernel_fetch::install_kernel(
+                        &fetcher,
+                        &url,
+                        &config.kernel.sha256,
+                        &cache_dir,
+                    ) {
+                        Ok(path) => {
+                            info!("Kernel installed to: {}", path.display());
+                            Some(path)
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(e));
+                }
+            }
+        } else {
+            // PTP and other CNI plugins: use the explicit flag or config default (stock kernel).
+            crate::core::apple_container::select_kernel_path(
+                self.node_kernel_path.clone(),
+                config.cluster.node_kernel_path.clone(),
+            )
+        };
 
         let options = CreateClusterOptions {
             name: self.name.clone(),
@@ -211,7 +334,8 @@ impl CreateArgs {
             wait_timeout: self.wait,
             retain_on_failure: self.retain,
             skip_csr_approval: self.skip_csr_approval,
-            cni_plugin: self.cni.clone().into(), // Convert CLI arg to config enum
+            cni_plugin,
+            node_kernel_path,
         };
 
         cluster_manager.create_cluster(options).await?;
@@ -452,17 +576,8 @@ impl InstallArgs {
             AddonType::NginxIngress => {
                 self.install_nginx_ingress(&cluster_manager).await?;
             }
-            AddonType::IngressNginx => {
-                self.install_ingress_nginx(&cluster_manager).await?;
-            }
-            AddonType::Cni => {
-                self.install_cni(&cluster_manager).await?;
-            }
-            AddonType::Coredns => {
-                self.install_coredns(&cluster_manager).await?;
-            }
-            AddonType::MetricsServer => {
-                self.install_metrics_server(&cluster_manager).await?;
+            AddonType::DemoApp => {
+                self.install_demo_app(&cluster_manager).await?;
             }
         }
 
@@ -491,65 +606,67 @@ impl InstallArgs {
 
         let kubeconfig_str = kubeconfig_path.to_string_lossy();
 
-        // Get the current directory to find manifest files
-        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-        let manifest_dir = current_dir
-            .join("kina-cli")
-            .join("manifests")
-            .join("nginx-ingress");
-
-        if !manifest_dir.exists() {
-            return Err(anyhow::anyhow!(
-                "Nginx-ingress manifest directory not found: {}",
-                manifest_dir.display()
-            ));
-        }
-
-        // Define all required manifests in deployment order using local files
-        let manifest_files = [
+        // Nginx-ingress manifests embedded in the binary — works from any directory (AC2).
+        let manifests: &[(&str, &str)] = &[
             // 1. Common resources (namespace, RBAC, ServiceAccount)
-            ("ns-and-sa.yaml", "namespace and ServiceAccount"),
-            ("rbac.yaml", "RBAC resources"),
+            (
+                include_str!("../../manifests/nginx-ingress/ns-and-sa.yaml"),
+                "namespace and ServiceAccount",
+            ),
+            (
+                include_str!("../../manifests/nginx-ingress/rbac.yaml"),
+                "RBAC resources",
+            ),
             // 2. CRDs (Custom Resource Definitions)
-            ("crds.yaml", "Custom Resource Definitions"),
+            (
+                include_str!("../../manifests/nginx-ingress/crds.yaml"),
+                "Custom Resource Definitions",
+            ),
             // 3. ConfigMap with default configuration
-            ("nginx-config.yaml", "default configuration"),
+            (
+                include_str!("../../manifests/nginx-ingress/nginx-config.yaml"),
+                "default configuration",
+            ),
             // 4. IngressClass
-            ("ingress-class.yaml", "IngressClass"),
+            (
+                include_str!("../../manifests/nginx-ingress/ingress-class.yaml"),
+                "IngressClass",
+            ),
             // 5. DaemonSet deployment (better for single-node clusters)
-            ("nginx-ingress-daemonset.yaml", "DaemonSet deployment"),
+            (
+                include_str!("../../manifests/nginx-ingress/nginx-ingress-daemonset.yaml"),
+                "DaemonSet deployment",
+            ),
         ];
 
         // Apply each manifest in order
-        for (i, (manifest_file, description)) in manifest_files.iter().enumerate() {
-            let manifest_path = manifest_dir.join(manifest_file);
-
-            if !manifest_path.exists() {
-                warn!(
-                    "Manifest file not found: {}, skipping",
-                    manifest_path.display()
-                );
-                continue;
-            }
-
+        for (i, (manifest_content, description)) in manifests.iter().enumerate() {
             info!(
-                "Applying manifest {}/{}: {} ({})",
+                "Applying manifest {}/{}: {}",
                 i + 1,
-                manifest_files.len(),
-                manifest_file,
+                manifests.len(),
                 description
             );
 
-            let output = std::process::Command::new("kubectl")
-                .args([
-                    "--kubeconfig",
-                    &kubeconfig_str,
-                    "apply",
-                    "-f",
-                    &manifest_path.to_string_lossy(),
-                ])
-                .output()
-                .context(format!("Failed to apply manifest: {}", manifest_file))?;
+            let mut child = std::process::Command::new("kubectl")
+                .args(["--kubeconfig", &kubeconfig_str, "apply", "-f", "-"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .context(format!("Failed to spawn kubectl for: {}", description))?;
+
+            if let Some(stdin) = child.stdin.take() {
+                let mut stdin = stdin;
+                use std::io::Write as _;
+                stdin
+                    .write_all(manifest_content.as_bytes())
+                    .context("Failed to write manifest to kubectl stdin")?;
+            }
+
+            let output = child
+                .wait_with_output()
+                .context(format!("Failed to wait for kubectl: {}", description))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -557,17 +674,17 @@ impl InstallArgs {
 
                 // Some resources might already exist or have expected warnings
                 if stderr.contains("already exists") || stderr.contains("Warning") {
-                    info!("Applied {} (with warnings/already exists)", manifest_file);
+                    info!("Applied {} (with warnings/already exists)", description);
                 } else {
                     return Err(anyhow::anyhow!(
                         "Failed to apply {}: {}\nStdout: {}",
-                        manifest_file,
+                        description,
                         stderr,
                         stdout
                     ));
                 }
             } else {
-                info!("Successfully applied {}", manifest_file);
+                info!("Successfully applied {}", description);
             }
 
             // Small delay between manifest applications
@@ -583,24 +700,322 @@ impl InstallArgs {
         Ok(())
     }
 
-    async fn install_ingress_nginx(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "ingress-nginx installation not yet implemented. Use nginx-ingress instead."
-        ))
-    }
+    async fn install_demo_app(&self, _cluster_manager: &ClusterManager) -> Result<()> {
+        info!("Installing demo application to cluster '{}'", self.cluster);
 
-    async fn install_cni(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!("CNI installation not yet implemented"))
-    }
+        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
+        let kubeconfig_path = std::path::Path::new(&home_dir)
+            .join(".kube")
+            .join(&self.cluster);
 
-    async fn install_coredns(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!("CoreDNS installation not yet implemented"))
-    }
+        if !kubeconfig_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Kubeconfig file not found: {}",
+                kubeconfig_path.display()
+            ));
+        }
 
-    async fn install_metrics_server(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "Metrics server installation not yet implemented"
-        ))
+        let kubeconfig_str = kubeconfig_path.to_string_lossy();
+
+        // Detect DNS domain from `container system dns list`; fall back to "test".
+        let dns_domain = {
+            let dns_output = std::process::Command::new("container")
+                .args(["system", "dns", "list"])
+                .output();
+            match dns_output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    parse_dns_domain(&stdout)
+                }
+                _ => "test".to_string(),
+            }
+        };
+
+        // Demo-app manifest embedded in the binary (AC1).
+        let raw_manifest = include_str!("../../manifests/demo-app.yaml");
+        let rendered = render_demo_manifest(raw_manifest, &self.cluster, &dns_domain);
+
+        info!(
+            "Applying demo-app manifest (cluster={}, domain={})",
+            self.cluster, dns_domain
+        );
+
+        let mut child = std::process::Command::new("kubectl")
+            .args(["--kubeconfig", &kubeconfig_str, "apply", "-f", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .context("Failed to spawn kubectl for demo-app")?;
+
+        if let Some(stdin) = child.stdin.take() {
+            let mut stdin = stdin;
+            use std::io::Write as _;
+            stdin
+                .write_all(rendered.as_bytes())
+                .context("Failed to write demo-app manifest to kubectl stdin")?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .context("Failed to wait for kubectl (demo-app)")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
+            return Err(anyhow::anyhow!(
+                "Failed to apply demo-app manifest: {}\nStdout: {}",
+                stderr,
+                stdout_str
+            ));
+        }
+
+        info!("Demo app applied; waiting for pods to be Ready...");
+
+        // Wait for pods to be Ready
+        let wait = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "wait",
+                "--for=condition=Ready",
+                "pods",
+                "-l",
+                "app=kina-demo-app",
+                "--timeout=120s",
+            ])
+            .output();
+
+        match wait {
+            Ok(out) if out.status.success() => {
+                info!("Demo app pods are Ready");
+            }
+            Ok(out) => {
+                warn!(
+                    "Demo app pods not Ready within timeout: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                warn!("Failed to wait for demo app pods: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Args and implementation for `kina verify [cluster]`.
+impl VerifyArgs {
+    pub async fn execute(&self, config: &Config) -> Result<()> {
+        let cluster_manager = ClusterManager::new(config)?;
+        let clusters = cluster_manager.list_clusters().await?;
+
+        let cluster_name = match &self.cluster {
+            Some(name) => name.clone(),
+            None => {
+                if clusters.len() == 1 {
+                    clusters[0].name.clone()
+                } else if clusters.is_empty() {
+                    return Err(anyhow::anyhow!("No clusters found"));
+                } else {
+                    let names: Vec<&str> = clusters.iter().map(|c| c.name.as_str()).collect();
+                    return Err(anyhow::anyhow!(
+                        "Multiple clusters found ({}); specify one: kina verify <cluster>",
+                        names.join(", ")
+                    ));
+                }
+            }
+        };
+
+        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
+        let kubeconfig_path = std::path::Path::new(&home_dir)
+            .join(".kube")
+            .join(&cluster_name);
+        let kubeconfig_str = kubeconfig_path.to_string_lossy().to_string();
+
+        println!("Verifying cluster '{}'...", cluster_name);
+        let mut all_pass = true;
+
+        // (a) Node count — all nodes Ready
+        let nodes_output = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "get",
+                "nodes",
+                "--no-headers",
+            ])
+            .output();
+
+        match nodes_output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+                let total = lines.len();
+                let ready = lines
+                    .iter()
+                    .filter(|l| l.split_whitespace().nth(1) == Some("Ready"))
+                    .count();
+                let pass = ready == total && total > 0;
+                if !pass {
+                    all_pass = false;
+                }
+                println!(
+                    "{} Nodes: {}/{} Ready",
+                    if pass { "PASS" } else { "FAIL" },
+                    ready,
+                    total
+                );
+            }
+            _ => {
+                all_pass = false;
+                println!("FAIL Nodes: unable to query");
+            }
+        }
+
+        // (b) Cilium DaemonSet ready n/n + operator healthy
+        let cilium_ds = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "get",
+                "pods",
+                "-n",
+                "kube-system",
+                "-l",
+                "k8s-app=cilium",
+                "--no-headers",
+            ])
+            .output();
+
+        match cilium_ds {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+                let total = lines.len();
+                let ready = lines
+                    .iter()
+                    .filter(|l| {
+                        l.split_whitespace()
+                            .nth(1)
+                            .is_some_and(|s| s.starts_with("1/1"))
+                    })
+                    .count();
+                let pass = ready == total && total > 0;
+                if !pass {
+                    all_pass = false;
+                }
+                println!(
+                    "{} Cilium DaemonSet: {}/{} Ready",
+                    if pass { "PASS" } else { "FAIL" },
+                    ready,
+                    total
+                );
+            }
+            _ => {
+                // Cilium not installed — not a failure if PTP is in use
+                println!("INFO Cilium: not found (may be using PTP CNI)");
+            }
+        }
+
+        // (c) HTTP probe each worker node
+        let dns_domain = {
+            let dns_output = std::process::Command::new("container")
+                .args(["system", "dns", "list"])
+                .output();
+            match dns_output {
+                Ok(out) if out.status.success() => {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    parse_dns_domain(&stdout)
+                }
+                _ => "test".to_string(),
+            }
+        };
+
+        let host_header = probe_host(&cluster_name, &dns_domain);
+
+        let cluster_info_result = cluster_manager.get_cluster_status(&cluster_name).await;
+        let node_ips: Vec<String> = match &cluster_info_result {
+            Ok(info) => info
+                .nodes
+                .iter()
+                .filter(|n| n.role == NodeRole::Worker)
+                .filter_map(|n| n.ip_address.clone())
+                .filter(|ip| !ip.is_empty())
+                .collect(),
+            Err(_) => vec![],
+        };
+
+        if node_ips.is_empty() {
+            all_pass = false;
+            println!("FAIL HTTP probes: node IPs could not be determined");
+        }
+
+        let mut probe_results: Vec<ProbeResult> = vec![];
+
+        for ip in &node_ips {
+            let url = probe_url(ip);
+            let curl_out = std::process::Command::new("curl")
+                .args([
+                    "-s",
+                    "--max-time",
+                    "5",
+                    "-H",
+                    &format!("Host: {}", host_header),
+                    &url,
+                ])
+                .output();
+
+            let passed = match curl_out {
+                Ok(out) => {
+                    let body = String::from_utf8_lossy(&out.stdout);
+                    probe_passed(&body)
+                }
+                Err(_) => false,
+            };
+
+            println!(
+                "{} HTTP probe {} (Host: {}): {}",
+                if passed { "PASS" } else { "FAIL" },
+                url,
+                host_header,
+                if passed {
+                    "200 + demo marker"
+                } else {
+                    "no demo marker"
+                }
+            );
+
+            probe_results.push(ProbeResult {
+                node: ip.clone(),
+                passed,
+            });
+        }
+
+        // http_layer_pass: returns false for empty node_ips (no-evidence FAIL)
+        // and delegates to aggregate_verify for the probe results when IPs are present.
+        let probes_pass = aggregate_verify(&probe_results);
+        let http_pass = http_layer_pass(&node_ips, &probe_results);
+        if !http_pass {
+            all_pass = false;
+            if !probes_pass {
+                for r in &probe_results {
+                    if !r.passed {
+                        println!("  node {} did not return demo marker", r.node);
+                    }
+                }
+            }
+        }
+
+        println!();
+        if all_pass {
+            println!("PASS verify '{}'", cluster_name);
+            Ok(())
+        } else {
+            println!("FAIL verify '{}'", cluster_name);
+            std::process::exit(1);
+        }
     }
 }
 

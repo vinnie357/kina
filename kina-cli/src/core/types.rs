@@ -29,6 +29,10 @@ pub struct CreateClusterOptions {
     pub skip_csr_approval: bool,
     /// CNI plugin to use
     pub cni_plugin: CniPlugin,
+    /// Optional path to a custom Linux kernel for node containers.
+    /// When Some, kina passes `--kernel <path>` to every node `container run` invocation.
+    /// When None, the system default (stock) kernel is used.
+    pub node_kernel_path: Option<PathBuf>,
 }
 
 /// Options for loading images into a cluster
