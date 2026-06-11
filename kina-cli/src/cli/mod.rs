@@ -4,9 +4,11 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 use crate::core::cluster::ClusterManager;
 
+mod build;
 mod cluster;
 mod config_cmd;
 
+pub use build::*;
 pub use cluster::*;
 pub use config_cmd::*;
 
@@ -76,6 +78,9 @@ pub enum Commands {
 
     /// Verify a cluster's health end-to-end (nodes Ready, Cilium, HTTP probe)
     Verify(VerifyArgs),
+
+    /// Build kina artefacts (node images, etc.)
+    Build(BuildArgs),
 }
 
 impl Cli {
@@ -93,6 +98,7 @@ impl Cli {
             Some(Commands::ApproveCSR(args)) => args.execute(config).await,
             Some(Commands::Config(args)) => args.execute(config).await,
             Some(Commands::Verify(args)) => args.execute(config).await,
+            Some(Commands::Build(args)) => args.execute(config).await,
             None => {
                 println!("kina {}", env!("CARGO_PKG_VERSION"));
                 match ClusterManager::new(config) {
