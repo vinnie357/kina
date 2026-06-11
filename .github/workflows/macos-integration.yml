@@ -100,15 +100,14 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            kina-cli/target
+            target
           key: cargo-macos-${{ hashFiles('kina-cli/Cargo.lock') }}
           restore-keys: |
             cargo-macos-
 
       - name: Build kina release binary
-        working-directory: kina-cli
         run: |
-          cargo build --release
+          cargo build --release -p kina-cli
           echo "Build complete: $(ls -lh target/release/kina)"
           sudo cp target/release/kina /usr/local/bin/kina
           kina --version
