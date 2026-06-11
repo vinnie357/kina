@@ -7,11 +7,11 @@
 **Development Phase**: Active development with established project structure, comprehensive tooling, and advanced development practices
 
 ## Task Tracking
-Project tasks are tracked with **beads** (`bd`), a distributed git-backed issue tracker.
-See [AGENTS.md](AGENTS.md) for beads workflow, session completion rules, and `bd` commands.
-- Tasks stored in `.beads/` directory, synced via git
-- Use `bd ready` to find actionable tasks with no blockers
-- Use `bd list` to see all open tasks
+Project tasks are tracked with **bees**, a lightweight SQLite-backed local issue tracker (JSONL synced via git).
+See [AGENTS.md](AGENTS.md) for bees workflow, session completion rules, and `bees` commands.
+- Tasks stored in `.bees/` directory (issues.jsonl synced via git, SQLite db local-only)
+- Use `bees ready` to find actionable tasks with no blockers
+- Use `bees list` to see all open tasks
 - Workflow: one task = one branch = one PR
 - Commit format: `type(scope): description` (no Co-Authored-By)
 
@@ -34,10 +34,10 @@ See [AGENTS.md](AGENTS.md) for beads workflow, session completion rules, and `bd
 - **CLI Patterns**: Focus on command parsing, configuration management, output formatting
 
 ### Workflow
-- **Beads-driven**: Use `bd ready` to find tasks, `bd update <id> --status in_progress` to claim
+- **Bees-driven**: Use `bees ready` to find tasks, `bees update <id> --status in_progress` to claim
 - **Branch per task**: `git checkout main && git pull` then `git checkout -b type/description`
 - **Research-backed**: Reference docs/research/ for architecture decisions and constraints
-- **Discover tools with mise**: Run `mise tasks` to see all available development tasks. Task namespaces: `test:` (unit tests), `test:cluster:` (integration tests), `test:action:` (GitHub Actions), `kina:` (CLI), `image:` (node images), `k8s:` (Kubernetes tools), `bd:` (beads), `gitleaks:` (security scanning), `colima:` (Docker via colima)
+- **Discover tools with mise**: Run `mise tasks` to see all available development tasks. Task namespaces: `test:` (unit tests), `test:cluster:` (integration tests), `test:action:` (GitHub Actions), `kina:` (CLI), `image:` (node images), `k8s:` (Kubernetes tools), `bees:` (bees issue tracking), `gitleaks:` (security scanning), `colima:` (Docker via colima)
 
 ### Anti-Fabrication Requirements
 All AI assistants working on this project MUST adhere to strict factual accuracy:
