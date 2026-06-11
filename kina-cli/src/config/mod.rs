@@ -48,6 +48,13 @@ pub struct ClusterDefaults {
 
     /// Default CNI plugin to use
     pub default_cni: CniPlugin,
+
+    /// Optional path to a custom Linux kernel for node containers.
+    /// When set, kina passes `--kernel <path>` to `container run` for every node container,
+    /// booting each on the custom kernel (zero system mutation — no `container system kernel set`).
+    /// When None (the default), the system default kernel is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_kernel_path: Option<PathBuf>,
 }
 
 /// CNI plugin options
@@ -158,6 +165,7 @@ impl Default for Config {
                 data_dir: data_dir.clone(),
                 retain_on_failure: false,
                 default_cni: CniPlugin::Ptp, // Default to PTP for Apple Container compatibility
+                node_kernel_path: None,      // Stock kernel by default; set to enable custom kernel
             },
             apple_container: AppleContainerConfig {
                 cli_path: None, // Will be detected automatically

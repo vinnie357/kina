@@ -42,6 +42,14 @@ pub struct CreateArgs {
     /// CNI plugin to use (ptp or cilium)
     #[arg(long, value_enum, default_value = "ptp")]
     pub cni: CniPluginArg,
+
+    /// Path to a custom Linux kernel for node containers.
+    /// When set, kina passes `--kernel <PATH>` to every node `container run` invocation,
+    /// booting nodes on the custom kernel without mutating the system kernel.
+    /// When omitted, the system default (stock) kernel is used.
+    /// Backed by node_kernel_path (resolved via select_kernel_path precedence).
+    #[arg(long = "kernel-path", value_name = "PATH")]
+    pub node_kernel_path: Option<PathBuf>,
 }
 
 /// Delete a Kubernetes cluster
@@ -197,6 +205,11 @@ impl CreateArgs {
 
         let cluster_manager = ClusterManager::new(config)?;
 
+        let node_kernel_path = crate::core::apple_container::select_kernel_path(
+            self.node_kernel_path.clone(),
+            config.cluster.node_kernel_path.clone(),
+        );
+
         let options = CreateClusterOptions {
             name: self.name.clone(),
             image: self.image.clone(),
@@ -212,6 +225,7 @@ impl CreateArgs {
             retain_on_failure: self.retain,
             skip_csr_approval: self.skip_csr_approval,
             cni_plugin: self.cni.clone().into(), // Convert CLI arg to config enum
+            node_kernel_path,
         };
 
         cluster_manager.create_cluster(options).await?;

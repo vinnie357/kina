@@ -46,7 +46,8 @@ rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
 /// Build the `cilium install` command string for the given Cilium version and
 /// control-plane VM IP.
 ///
-/// All `--set` values are topology-correct for Apple Container clusters:
+/// All `--set` values are topology-correct for Apple Container clusters using the
+/// stock kata-kernel (workaround profile — custom kernel switches to the full-eBPF profile):
 /// - kubeadm deploys kube-proxy, so `kubeProxyReplacement=false` makes the hybrid explicit
 /// - `ipam.mode=kubernetes` uses per-node PodCIDRs from `podSubnet 10.244.0.0/16`
 ///   (the cilium-cli default cluster-pool 10.0.0.0/8 mismatches the kube-proxy clusterCIDR)
@@ -60,26 +61,13 @@ rm -f cilium-linux-arm64.tar.gz cilium-linux-arm64.tar.gz.sha256sum"#,
 ///   `EnableL7Proxy=true`; that function issues `ip rule replace … table local` with AF_INET
 ///   which the kernel rejects with EAFNOSUPPORT, crashing the cilium-agent before it starts.
 ///   Network policy enforcement (L3/L4) and pod-to-pod connectivity are unaffected.
-/// - `bpf.xtSocketFallback=false` — disables Cilium's xt_socket-based static proxy iptables
-///   rule. When `enable-xt-socket-fallback=true` (the default), Cilium's iptables datapath
-///   manager installs `CILIUM_PRE_mangle -m socket --transparent ... -j MARK` in the mangle
-///   table, which requires the `xt_socket` kernel module (`CONFIG_NETFILTER_XT_MATCH_SOCKET`).
-///   The Apple Container kata-kernel (6.12.28) does NOT have this module compiled in
-///   (`# CONFIG_NETFILTER_XT_MATCH_SOCKET is not set` verified via `/proc/config.gz`), causing
-///   `iptables v1.8.8 legacy: unknown option --transparent` (exit status 2). Setting
-///   `bpf.xtSocketFallback=false` → `enable-xt-socket-fallback: "false"` in the cilium-config
-///   ConfigMap prevents this rule from being installed. This is the chart-native Helm key
-///   (bpf.xtSocketFallback) for the same kernel-gap that `dnsproxy-enable-transparent-mode=false`
-///   (set via extraConfig) addresses for the DNS proxy path — these are two separate xt_socket
-///   consumers in Cilium's codebase. See cilium/cilium#32448 and kubernetes/minikube#18851.
 /// - `--set-string extraConfig.dnsproxy-enable-transparent-mode=false` — injects the key
 ///   `dnsproxy-enable-transparent-mode: "false"` (string, not boolean) verbatim into the
 ///   `cilium-config` ConfigMap. The `extraConfig` Helm key merges arbitrary keys directly
 ///   into the ConfigMap and is immune to chart path renames. `--set-string` is required because
 ///   the ConfigMap `data` field is `map<string,string>`; using plain `--set` passes a YAML
 ///   boolean `false` which the Go JSON unmarshaler rejects with "cannot unmarshal bool into Go
-///   struct field ConfigMap.data of type string". This disables the dnsproxy transparent mode
-///   (separate from the static proxy xt_socket rule controlled by bpf.xtSocketFallback above).
+///   struct field ConfigMap.data of type string". This disables the dnsproxy transparent mode.
 ///   NOTE: Do NOT also set a chart-native `dnsProxy.*` path simultaneously — that would produce
 ///   a duplicate key in the rendered ConfigMap. See cilium/cilium#32448 and
 ///   kubernetes/minikube#18851 for the broader kata-kernel xt_socket / ip-rule context.
@@ -99,7 +87,6 @@ pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
          --set ipv6.enabled=false \
          --set enableLocalNodeRoute=false \
          --set l7Proxy=false \
-         --set bpf.xtSocketFallback=false \
          --set-string extraConfig.dnsproxy-enable-transparent-mode=false \
          --set nodePort.enabled=true \
          --set hostPort.enabled=true \
@@ -109,6 +96,93 @@ pub fn build_cilium_install_cmd(version: &str, cp_ip: &str) -> String {
         version = version,
         cp_ip = cp_ip,
     )
+}
+
+/// Build the `cilium install` command string for the full-eBPF profile.
+///
+/// Used when kina nodes are booted on the custom kernel (6.18.5+kina.1) which has
+/// all required BPF options compiled in (CONFIG_BPF_JIT=y, CONFIG_BPF_EVENTS=y,
+/// CONFIG_NETFILTER_XT_MATCH_SOCKET=y, CONFIG_IP_MULTIPLE_TABLES=y, etc.).
+///
+/// Full-eBPF values (all kata-kernel workarounds retired):
+/// - `kubeProxyReplacement=true` — Cilium replaces kube-proxy; kubeadm must skip
+///   the addon/kube-proxy phase (see `build_kubeadm_init_args(true)`).
+/// - `bpf.masquerade=true` — eBPF-native masquerade instead of iptables MASQUERADE.
+/// - `bpf.hostLegacyRouting=false` — BPF host routing (requires BPF_JIT + multiple-tables).
+/// - `hubble.enabled=true` — Hubble observability plane (requires BPF_EVENTS + KPROBES).
+/// - `ipam.mode=kubernetes` — per-node PodCIDRs from kubeadm podSubnet 10.244.0.0/16.
+/// - `k8sServiceHost` / `k8sServicePort` — remove kube-proxy bootstrap dependency.
+///
+/// Retired workarounds (vs stock profile):
+/// - enableLocalNodeRoute=false — retired; IP_MULTIPLE_TABLES + FIB_RULES present in kernel.
+/// - l7Proxy=false — retired; L7 proxy enabled (omitted-default-true).
+/// - extraConfig.dnsproxy-enable-transparent-mode=false — retired; XT_MATCH_SOCKET + TPROXY present.
+/// - kubeProxyReplacement=false — retired; full replacement enabled.
+///
+/// Note: l7Proxy is intentionally omitted (default true) rather than set explicitly.
+/// See cilium/cilium#32448 and kubernetes/minikube#18851 for the stock-kernel context.
+pub fn build_cilium_install_cmd_ebpf(version: &str, cp_ip: &str) -> String {
+    format!(
+        "KUBECONFIG=/etc/kubernetes/admin.conf cilium install --version {version} \
+         --set kubeProxyReplacement=true \
+         --set ipam.mode=kubernetes \
+         --set bpf.masquerade=true \
+         --set bpf.hostLegacyRouting=false \
+         --set hubble.enabled=true \
+         --set k8sServiceHost={cp_ip} \
+         --set k8sServicePort=6443 \
+         --set operator.replicas=1",
+        version = version,
+        cp_ip = cp_ip,
+    )
+}
+
+/// Returns the `--kernel <path>` arguments to pass to `container run` when a custom
+/// kernel path is set, or an empty Vec when using the system default (stock) kernel.
+///
+/// Used by all three node-creation fns (create_single_node, create_control_plane_node,
+/// create_worker_node) to inject the custom kernel into the node container run args.
+pub fn node_kernel_args(kernel_path: Option<&std::path::Path>) -> Vec<String> {
+    match kernel_path {
+        Some(path) => vec!["--kernel".to_string(), path.to_string_lossy().into_owned()],
+        None => vec![],
+    }
+}
+
+/// Resolve the effective kernel path: CLI flag takes precedence over the config default.
+///
+/// Mirrors the `select_cni` precedence model — CLI flag always wins over config default.
+/// Returns `None` when neither is set (stock kernel; no `--kernel` flag injected).
+pub fn select_kernel_path(
+    cli_flag: Option<std::path::PathBuf>,
+    config_default: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    cli_flag.or(config_default)
+}
+
+/// Build the kubeadm init argument list for node initialization.
+///
+/// When `full_ebpf` is true (custom kernel with kubeProxyReplacement=true), the
+/// `addon/kube-proxy` phase is skipped so kubeadm does not deploy kube-proxy.
+/// When `full_ebpf` is false (stock kernel), kube-proxy is retained.
+///
+/// The `--skip-phases=preflight` flag is always present (existing baseline);
+/// `--skip-phases=addon/kube-proxy` is added as a comma-joined extension under
+/// full-eBPF mode.
+pub fn build_kubeadm_init_args(full_ebpf: bool) -> Vec<String> {
+    if full_ebpf {
+        vec![
+            "--config=/kind/kubeadm.conf".to_string(),
+            "--skip-phases=preflight,addon/kube-proxy".to_string(),
+            "--v=1".to_string(),
+        ]
+    } else {
+        vec![
+            "--config=/kind/kubeadm.conf".to_string(),
+            "--skip-phases=preflight".to_string(),
+            "--v=1".to_string(),
+        ]
+    }
 }
 
 /// Resolve the effective CNI plugin: CLI flag takes precedence over the
@@ -443,8 +517,14 @@ impl AppleContainerClient {
                 "Creating single-node cluster with combined roles: {}",
                 node_name
             );
-            self.create_single_node(&options.name, &node_name, &options.image, cni)
-                .await?;
+            self.create_single_node(
+                &options.name,
+                &node_name,
+                &options.image,
+                cni,
+                options.node_kernel_path.as_deref(),
+            )
+            .await?;
         } else {
             // Multi-node cluster: 1 control-plane + N workers
             info!(
@@ -474,8 +554,14 @@ impl AppleContainerClient {
         );
 
         // 1. Create control-plane container
-        self.create_control_plane_node(&options.name, &cp_name, &options.image, true)
-            .await?;
+        self.create_control_plane_node(
+            &options.name,
+            &cp_name,
+            &options.image,
+            true,
+            options.node_kernel_path.as_deref(),
+        )
+        .await?;
 
         // 2. Wait for control-plane container to be ready and get IP
         self.wait_for_container_ready(&cp_name).await?;
@@ -484,7 +570,12 @@ impl AppleContainerClient {
 
         // 3. Initialize Kubernetes on control-plane and get join info
         let join_info = self
-            .initialize_kubernetes_cluster_with_join_info(&cp_name, &cp_ip, &options.name)
+            .initialize_kubernetes_cluster_with_join_info(
+                &cp_name,
+                &cp_ip,
+                &options.name,
+                options.node_kernel_path.as_deref(),
+            )
             .await?;
 
         // 4. Setup kubeconfig early (user gets kubectl access even if workers fail)
@@ -492,7 +583,9 @@ impl AppleContainerClient {
             .await?;
 
         // 5. Install CNI on control-plane (must be before workers join)
-        self.install_cni_plugin(&cp_name, cni.clone()).await?;
+        // Pass kernel_path so Cilium selects the full-eBPF or stock workaround profile.
+        self.install_cni_plugin(&cp_name, cni.clone(), options.node_kernel_path.as_deref())
+            .await?;
 
         // 6. Create and join worker nodes sequentially
         for i in 0..worker_count {
@@ -510,8 +603,13 @@ impl AppleContainerClient {
                 worker_name
             );
 
-            self.create_worker_node(&options.name, &worker_name, &options.image)
-                .await?;
+            self.create_worker_node(
+                &options.name,
+                &worker_name,
+                &options.image,
+                options.node_kernel_path.as_deref(),
+            )
+            .await?;
 
             self.wait_for_container_ready(&worker_name).await?;
             let worker_ip = self.get_container_ip(&worker_name).await?;
@@ -629,6 +727,7 @@ impl AppleContainerClient {
         node_name: &str,
         image: &str,
         cni: CniPlugin,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating single Kubernetes node '{}'", node_name);
 
@@ -662,6 +761,12 @@ impl AppleContainerClient {
         // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
+
+        // Inject custom kernel args when a kernel path is configured.
+        // node_kernel_args returns ["--kernel", "<path>"] or [] for stock kernel.
+        let kernel_args_owned = node_kernel_args(kernel_path);
+        let kernel_args_refs: Vec<&str> = kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&kernel_args_refs);
 
         // Note: No port mapping needed - Apple Container VM gets its own IP
         // Kubernetes API server will be accessible at <vm-ip>:6443
@@ -711,8 +816,8 @@ impl AppleContainerClient {
         let vm_ip = self.get_container_ip(node_name).await?;
         info!("Container '{}' running at IP: {}", node_name, vm_ip);
 
-        // Initialize Kubernetes cluster
-        self.initialize_kubernetes_cluster(node_name, &vm_ip)
+        // Initialize Kubernetes cluster (kernel_path determines full-eBPF vs stock kubeadm profile)
+        self.initialize_kubernetes_cluster(node_name, &vm_ip, kernel_path)
             .await?;
 
         // Generate and save kubeconfig immediately after cluster init
@@ -725,7 +830,8 @@ impl AppleContainerClient {
 
         // Install CNI plugin (now user has kubectl access if this fails)
         // Use the resolved CNI plugin (CLI flag overrides config default).
-        self.install_cni_plugin(node_name, cni).await?;
+        // Pass kernel_path so Cilium selects the full-eBPF or stock workaround profile.
+        self.install_cni_plugin(node_name, cni, kernel_path).await?;
 
         info!(
             "Kubernetes cluster '{}' initialized successfully",
@@ -741,6 +847,7 @@ impl AppleContainerClient {
         node_name: &str,
         image: &str,
         is_primary: bool,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating control plane node '{}'", node_name);
 
@@ -775,6 +882,12 @@ impl AppleContainerClient {
         // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
+
+        // Inject custom kernel args when a kernel path is configured.
+        let cp_kernel_args_owned = node_kernel_args(kernel_path);
+        let cp_kernel_args_refs: Vec<&str> =
+            cp_kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&cp_kernel_args_refs);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -814,6 +927,7 @@ impl AppleContainerClient {
         cluster_name: &str,
         node_name: &str,
         image: &str,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<()> {
         info!("Creating worker node '{}'", node_name);
 
@@ -842,6 +956,12 @@ impl AppleContainerClient {
         // Apple Container has no privileged-mode flag; since 0.12.0 the default cap set
         // is insufficient for systemd, kubeadm, kubelet, containerd, and Cilium eBPF.
         args.extend_from_slice(&node_cap_args());
+
+        // Inject custom kernel args when a kernel path is configured.
+        let wk_kernel_args_owned = node_kernel_args(kernel_path);
+        let wk_kernel_args_refs: Vec<&str> =
+            wk_kernel_args_owned.iter().map(|s| s.as_str()).collect();
+        args.extend_from_slice(&wk_kernel_args_refs);
 
         // Set up environment for containerized systemd in VM
         let hostname_env = format!("HOSTNAME={}", node_name);
@@ -1669,11 +1789,18 @@ clusterCIDR: "10.244.0.0/16"
         )
     }
 
-    /// Write kubeadm config and run kubeadm init in a container
+    /// Write kubeadm config and run kubeadm init in a container.
+    ///
+    /// When `full_ebpf` is true (custom kernel + kubeProxyReplacement=true), passes
+    /// `--skip-phases=preflight,addon/kube-proxy` so kubeadm does not deploy kube-proxy.
+    /// When false (stock kernel), only `--skip-phases=preflight` is passed.
+    ///
+    /// Uses `build_kubeadm_init_args(full_ebpf)` to build the argument list.
     fn run_kubeadm_init(
         &self,
         container_name: &str,
         kubeadm_config: &str,
+        full_ebpf: bool,
     ) -> Result<std::process::Output> {
         // Write kubeadm config to container
         let mut cmd = std::process::Command::new(&self.cli_path);
@@ -1694,24 +1821,29 @@ clusterCIDR: "10.244.0.0/16"
             ));
         }
 
-        // Initialize cluster with kubeadm
+        // Initialize cluster with kubeadm using the computed arg list.
+        // build_kubeadm_init_args handles the kube-proxy skip for full-eBPF mode.
+        let kubeadm_args = build_kubeadm_init_args(full_ebpf);
+
         let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args([
-            "exec",
-            container_name,
-            "kubeadm",
-            "init",
-            "--config=/kind/kubeadm.conf",
-            "--skip-phases=preflight",
-            "--v=1",
-        ]);
+        let mut exec_args = vec!["exec", container_name, "kubeadm", "init"];
+        let arg_refs: Vec<&str> = kubeadm_args.iter().map(|s| s.as_str()).collect();
+        exec_args.extend_from_slice(&arg_refs);
+        cmd.args(&exec_args);
 
         info!("Running kubeadm init (this may take a few minutes)...");
         cmd.output().context("Failed to run kubeadm init")
     }
 
-    /// Initialize Kubernetes cluster with kubeadm (single-node, no join info needed)
-    async fn initialize_kubernetes_cluster(&self, container_name: &str, vm_ip: &str) -> Result<()> {
+    /// Initialize Kubernetes cluster with kubeadm (single-node, no join info needed).
+    ///
+    /// `kernel_path`: when `Some`, the full-eBPF kubeadm profile is used (skip kube-proxy).
+    async fn initialize_kubernetes_cluster(
+        &self,
+        container_name: &str,
+        vm_ip: &str,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         info!(
             "Initializing Kubernetes cluster in container '{}'",
             container_name
@@ -1723,7 +1855,8 @@ clusterCIDR: "10.244.0.0/16"
             .unwrap_or(container_name);
 
         let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
-        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
+        let output =
+            self.run_kubeadm_init(container_name, &kubeadm_config, kernel_path.is_some())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1739,12 +1872,15 @@ clusterCIDR: "10.244.0.0/16"
         Ok(())
     }
 
-    /// Initialize Kubernetes cluster and extract join info for multi-node setup
+    /// Initialize Kubernetes cluster and extract join info for multi-node setup.
+    ///
+    /// `kernel_path`: when `Some`, the full-eBPF kubeadm profile is used (skip kube-proxy).
     async fn initialize_kubernetes_cluster_with_join_info(
         &self,
         container_name: &str,
         vm_ip: &str,
         cluster_name: &str,
+        kernel_path: Option<&std::path::Path>,
     ) -> Result<KubeadmJoinInfo> {
         info!(
             "Initializing Kubernetes cluster in container '{}' (multi-node)",
@@ -1752,7 +1888,8 @@ clusterCIDR: "10.244.0.0/16"
         );
 
         let kubeadm_config = self.generate_kubeadm_init_config(container_name, vm_ip, cluster_name);
-        let output = self.run_kubeadm_init(container_name, &kubeadm_config)?;
+        let output =
+            self.run_kubeadm_init(container_name, &kubeadm_config, kernel_path.is_some())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1942,10 +2079,19 @@ failSwapOn: false
     ///
     /// `cni` is the result of `select_cni(options.cni_plugin, config.default_cni)` and
     /// reflects the effective choice: CLI flag overrides config default.
-    async fn install_cni_plugin(&self, container_name: &str, cni: CniPlugin) -> Result<()> {
+    ///
+    /// `kernel_path` determines which Cilium profile to use: when `Some`, the full-eBPF
+    /// profile (`build_cilium_install_cmd_ebpf`) is selected; when `None`, the stock
+    /// workaround profile (`build_cilium_install_cmd`) is used.
+    async fn install_cni_plugin(
+        &self,
+        container_name: &str,
+        cni: CniPlugin,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         match cni {
             CniPlugin::Ptp => self.install_ptp_cni(container_name).await,
-            CniPlugin::Cilium => self.install_cilium_cni(container_name).await,
+            CniPlugin::Cilium => self.install_cilium_cni(container_name, kernel_path).await,
         }
     }
 
@@ -2017,14 +2163,23 @@ EOF"#,
 
     /// Install Cilium CNI plugin using the pinned cilium-cli and topology-correct helm values.
     ///
-    /// Uses [`build_cilium_cli_install_script`] and [`build_cilium_install_cmd`] (pure fns)
-    /// so the exact commands are unit-testable without spawning containers.
+    /// Uses [`build_cilium_cli_install_script`] and either [`build_cilium_install_cmd`] (stock
+    /// kernel workaround profile) or [`build_cilium_install_cmd_ebpf`] (full-eBPF profile for
+    /// nodes booted on the custom kina kernel) so the exact commands are unit-testable without
+    /// spawning containers.
+    ///
+    /// Profile selection: when `kernel_path` is `Some`, the full-eBPF profile is used (custom
+    /// kernel has all required BPF options). When `None`, the stock workaround profile is used.
     ///
     /// After `cilium install`, runs a readiness gate (`cilium status --wait --wait-duration 5m`)
     /// with `KUBECONFIG=/etc/kubernetes/admin.conf`. On failure, captures diagnostics from
     /// `cilium status` (bare), `kubectl -n kube-system get pods -o wide`, and
     /// `kubectl -n kube-system logs ds/cilium --tail=100` and includes them in the error.
-    async fn install_cilium_cni(&self, container_name: &str) -> Result<()> {
+    async fn install_cilium_cni(
+        &self,
+        container_name: &str,
+        kernel_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         info!("Installing Cilium CNI plugin (pinned versions, topology-correct values)");
 
         // Step 1: Install the pinned cilium-cli binary inside the container.
@@ -2052,8 +2207,14 @@ EOF"#,
         let cp_ip = self.get_container_ip(container_name).await?;
 
         // Step 3: Install Cilium with topology-correct --set values.
-        // build_cilium_install_cmd documents every flag rationale in its doc-comment.
-        let cilium_install_cmd = build_cilium_install_cmd(CILIUM_VERSION, &cp_ip);
+        // Profile selection: full-eBPF when custom kernel is set; stock workaround otherwise.
+        // build_cilium_install_cmd_ebpf (custom kernel) retires all workarounds.
+        // build_cilium_install_cmd (stock kernel) retains workarounds for kata-kernel gaps.
+        let cilium_install_cmd = if kernel_path.is_some() {
+            build_cilium_install_cmd_ebpf(CILIUM_VERSION, &cp_ip)
+        } else {
+            build_cilium_install_cmd(CILIUM_VERSION, &cp_ip)
+        };
 
         let mut cmd = std::process::Command::new(&self.cli_path);
         cmd.args(["exec", container_name, "sh", "-c", &cilium_install_cmd]);
