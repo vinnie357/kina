@@ -202,12 +202,12 @@ fn local_tar_sha256_matches_known_digest() {
 }
 
 /// sha256_hex produces correct digest for known non-empty input.
-/// sha256("abc") = ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469132bffc726eac3fa7
+/// sha256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 #[test]
 fn local_tar_sha256_abc_matches_known_digest() {
     let digest = sha256_hex(b"abc");
     assert_eq!(
-        digest, "ba7816bf8f01cfea414140de5dae2ec73b00361bbef0469132bffc726eac3fa7",
+        digest, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         "sha256_hex(b\"abc\") must return the known sha256 digest"
     );
 }
