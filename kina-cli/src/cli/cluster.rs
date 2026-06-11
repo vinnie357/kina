@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 use crate::config::{CniPlugin, Config};
 use crate::core::cluster::ClusterManager;
+use crate::core::kernel_fetch;
 use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions};
 use crate::core::verify::{
     aggregate_verify, http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url,
@@ -219,10 +220,112 @@ impl CreateArgs {
 
         let cluster_manager = ClusterManager::new(config)?;
 
-        let node_kernel_path = crate::core::apple_container::select_kernel_path(
-            self.node_kernel_path.clone(),
-            config.cluster.node_kernel_path.clone(),
-        );
+        // Resolve the kernel path, applying the zero-step default for --cni cilium.
+        //
+        // Precedence:
+        //   1. --kernel-path flag (explicit, always wins)
+        //   2. Cached pinned kernel in ~/.kina/kernels/<tag>/vmlinux (silent reuse)
+        //   3. Auto-download the pinned kernel (first-run notice printed)
+        //   4. Hard error with --kernel-path escape hatch (offline / unreachable)
+        //
+        // PTP and other CNI plugins use the stock kernel; kernel_fetch is never invoked.
+        let cni_plugin: CniPlugin = self.cni.clone().into();
+        let node_kernel_path = if kernel_fetch::requires_kernel(&cni_plugin) {
+            // Check whether the pinned kernel is already cached.
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let pinned_cache = kernel_fetch::kernel_cache_file(&home, &config.kernel.tag);
+            let cached_verified = if pinned_cache.exists() {
+                // Verify sha256 of the cached file before trusting it.
+                let file_sha = std::fs::read(&pinned_cache).ok().map(|bytes| {
+                    use sha2::{Digest, Sha256};
+                    hex::encode(Sha256::digest(&bytes))
+                });
+                file_sha
+                    .map(|sha| kernel_fetch::verify_sha256(&sha, &config.kernel.sha256))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            let cached_pinned = if cached_verified {
+                Some(pinned_cache.clone())
+            } else {
+                None
+            };
+
+            match kernel_fetch::resolve_kernel_for_cilium(
+                self.node_kernel_path.clone(),
+                cached_pinned,
+                true, // fetch_ok: assume online; download errors surface via install_kernel
+            ) {
+                Ok(kernel_fetch::KernelChoice::ExplicitPath(p)) => Some(p),
+                Ok(kernel_fetch::KernelChoice::CachedPinned(p)) => {
+                    info!("Using cached pinned kernel: {}", p.display());
+                    Some(p)
+                }
+                Ok(kernel_fetch::KernelChoice::FetchPinned) => {
+                    // First run: print notice and download the pinned kernel.
+                    let notice = kernel_fetch::first_run_notice(
+                        &config.kernel.tag,
+                        kernel_fetch::KERNEL_SIZE_BYTES,
+                    );
+                    println!("{}", notice);
+
+                    let cache_dir = kernel_fetch::kernel_cache_dir(&home, &config.kernel.tag);
+                    let url = kernel_fetch::pinned_asset_url();
+
+                    struct HttpFetcher;
+                    impl kernel_fetch::KernelFetcher for HttpFetcher {
+                        fn fetch(
+                            &self,
+                            url: &str,
+                            dest_tmp: &std::path::Path,
+                        ) -> Result<u64, String> {
+                            // Synchronous download via reqwest blocking client.
+                            let mut response = reqwest::blocking::get(url)
+                                .map_err(|e| format!("HTTP request failed: {}", e))?;
+                            if !response.status().is_success() {
+                                return Err(format!(
+                                    "HTTP {} downloading {}",
+                                    response.status(),
+                                    url
+                                ));
+                            }
+                            let mut file = std::fs::File::create(dest_tmp)
+                                .map_err(|e| format!("cannot create temp file: {}", e))?;
+                            let bytes = std::io::copy(&mut response, &mut file)
+                                .map_err(|e| format!("write error: {}", e))?;
+                            Ok(bytes)
+                        }
+                    }
+
+                    let fetcher = HttpFetcher;
+                    match kernel_fetch::install_kernel(
+                        &fetcher,
+                        &url,
+                        &config.kernel.sha256,
+                        &cache_dir,
+                    ) {
+                        Ok(path) => {
+                            info!("Kernel installed to: {}", path.display());
+                            Some(path)
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(e));
+                }
+            }
+        } else {
+            // PTP and other CNI plugins: use the explicit flag or config default (stock kernel).
+            crate::core::apple_container::select_kernel_path(
+                self.node_kernel_path.clone(),
+                config.cluster.node_kernel_path.clone(),
+            )
+        };
 
         let options = CreateClusterOptions {
             name: self.name.clone(),
@@ -238,7 +341,7 @@ impl CreateArgs {
             wait_timeout: self.wait,
             retain_on_failure: self.retain,
             skip_csr_approval: self.skip_csr_approval,
-            cni_plugin: self.cni.clone().into(), // Convert CLI arg to config enum
+            cni_plugin,
             node_kernel_path,
         };
 

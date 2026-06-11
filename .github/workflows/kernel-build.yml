@@ -1,0 +1,175 @@
+name: Kernel Build
+
+# Triggered by a tag push matching the pinned release naming convention:
+#   kernel-v<linux-version>-kina.<n>
+# Example: git tag kernel-v6.18.5-kina.1 && git push origin kernel-v6.18.5-kina.1
+on:
+  push:
+    tags:
+      - 'kernel-v*'
+
+jobs:
+  build-kernel:
+    name: Build custom Linux kernel
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # Required to create GitHub Releases and upload assets
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout the repository at the tagged commit
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # 2. Extract the kernel tag from the Git ref
+      #    KERNEL_TAG = "kernel-v6.18.5-kina.1"  (the tag without refs/tags/ prefix)
+      # -----------------------------------------------------------------------
+      - name: Extract kernel tag
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "KERNEL_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building kernel for tag: ${TAG}"
+
+      # -----------------------------------------------------------------------
+      # 3. Build the Linux kernel inside a Linux container
+      #    Uses the apple/containerization kernel config fragment shipped in the
+      #    repository (.kernel-spike/cz/kernel/) as the base.
+      #
+      #    The build runs inside a privileged container so the Makefile can
+      #    use all available CPUs and cross-compile for arm64.
+      # -----------------------------------------------------------------------
+      - name: Build kernel in container
+        run: |
+          set -euo pipefail
+
+          # Resolve the linux version from the tag.
+          # Tag format: kernel-v<LINUX_VER>-kina.<N>
+          # Example:    kernel-v6.18.5-kina.1  ->  LINUX_VER=6.18.5
+          LINUX_VER="${KERNEL_TAG#kernel-v}"
+          LINUX_VER="${LINUX_VER%-kina.*}"
+          echo "Linux version: ${LINUX_VER}"
+
+          # Run the build inside an Ubuntu container with all build deps available.
+          # The kernel source is downloaded from kernel.org inside the container.
+          # The kina config fragment (from .kernel-spike/cz/kernel/config.fragment)
+          # is bind-mounted into the container and applied via scripts/kconfig/merge_config.sh.
+          docker run --rm \
+            --volume "${{ github.workspace }}/.kernel-spike:/kina-kernel:ro" \
+            --volume "${{ github.workspace }}/build-output:/output" \
+            --env LINUX_VER="${LINUX_VER}" \
+            ubuntu:22.04 \
+            bash -c '
+              set -euo pipefail
+
+              # Install build dependencies
+              apt-get update -qq
+              apt-get install -y -qq \
+                bc bison curl flex gcc-aarch64-linux-gnu \
+                kmod libelf-dev libssl-dev make wget xz-utils
+
+              # Download kernel source
+              mkdir -p /src
+              cd /src
+              wget -q "https://cdn.kernel.org/pub/linux/kernel/v${LINUX_VER%%.*}.x/linux-${LINUX_VER}.tar.xz"
+              tar -xf "linux-${LINUX_VER}.tar.xz"
+              cd "linux-${LINUX_VER}"
+
+              # Apply the base containerization arm64 defconfig
+              if [ -f /kina-kernel/cz/kernel/config-arm64 ]; then
+                cp /kina-kernel/cz/kernel/config-arm64 .config
+              else
+                make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+              fi
+
+              # Merge the kina config fragment if present
+              if [ -f /kina-kernel/cz/kernel/config.fragment ]; then
+                scripts/kconfig/merge_config.sh -m .config /kina-kernel/cz/kernel/config.fragment
+              fi
+
+              # Build the kernel (uncompressed Image for Apple Container)
+              make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$(nproc)" Image
+
+              # Copy output artifacts
+              mkdir -p /output
+              cp arch/arm64/boot/Image /output/vmlinux
+              cp .config /output/config-arm64
+            '
+
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      # -----------------------------------------------------------------------
+      # 4. Compute sha256 of the built vmlinux artifact
+      # -----------------------------------------------------------------------
+      - name: Compute sha256
+        run: |
+          set -euo pipefail
+          mkdir -p build-output
+          sha256sum build-output/vmlinux | awk '{print $1}' > build-output/vmlinux.sha256
+          echo "sha256: $(cat build-output/vmlinux.sha256)"
+          echo "size:   $(wc -c < build-output/vmlinux) bytes"
+
+      # -----------------------------------------------------------------------
+      # 5. Upload artifacts to the GitHub release created by the tag push
+      #    Assets:
+      #      - vmlinux             (the uncompressed kernel Image)
+      #      - vmlinux.sha256      (sha256 hex digest, one line)
+      #      - config-arm64        (full kernel config used for the build)
+      #      - config.fragment     (the kina-specific config fragment, if present)
+      # -----------------------------------------------------------------------
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda  # v2.2.1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Kina kernel ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## Kina custom Linux kernel — ${{ steps.tag.outputs.tag }}
+
+            Built from the apple/containerization arm64 base config with kina-specific
+            config fragment for full eBPF Cilium support.
+
+            ### Assets
+            | File | Description |
+            |------|-------------|
+            | `vmlinux` | Uncompressed ARM64 Linux kernel Image (~32 MB) |
+            | `vmlinux.sha256` | SHA256 hex digest of the vmlinux artifact |
+            | `config-arm64` | Full kernel config used for this build |
+            | `config.fragment` | kina-specific config fragment (eBPF overrides) |
+
+            ### Verification
+            ```sh
+            sha256sum -c vmlinux.sha256
+            ```
+
+            ### Usage
+            kina fetches this kernel automatically when `--cni cilium` is used.
+            The pinned tag and sha256 are embedded in `kina-cli/src/core/kernel_fetch.rs`.
+          draft: false
+          prerelease: false
+          files: |
+            build-output/vmlinux
+            build-output/vmlinux.sha256
+            build-output/config-arm64
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # 6. Upload config fragment as a separate asset if it exists in the repo
+      # -----------------------------------------------------------------------
+      - name: Upload config fragment (if present)
+        if: hashFiles('.kernel-spike/cz/kernel/config.fragment') != ''
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda  # v2.2.1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            .kernel-spike/cz/kernel/config.fragment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

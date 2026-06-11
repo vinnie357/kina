@@ -8,11 +8,37 @@ pub mod cluster_config;
 pub use cluster_config::ClusterConfig;
 // Note: Other imports removed as they're not currently used
 
+/// Pinned kernel distribution configuration.
+///
+/// Ships with defaults that point to the validated release artifact.
+/// Override in `~/.config/kina/config.toml` under `[kernel]` to pin a different version.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KernelConfig {
+    /// GitHub release tag for the pinned kernel asset (e.g. `kernel-v6.18.5-kina.1`).
+    pub tag: String,
+
+    /// sha256 hex digest of the pinned `vmlinux` artifact (lowercase, 64 chars).
+    pub sha256: String,
+}
+
+impl Default for KernelConfig {
+    fn default() -> Self {
+        Self {
+            tag: crate::core::kernel_fetch::KERNEL_TAG.to_string(),
+            sha256: crate::core::kernel_fetch::KERNEL_SHA256.to_string(),
+        }
+    }
+}
+
 /// Main configuration structure for kina CLI application
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     /// Default cluster configuration
     pub cluster: ClusterDefaults,
+
+    /// Pinned kernel distribution settings (used when --cni cilium is selected).
+    #[serde(default)]
+    pub kernel: KernelConfig,
 
     /// Apple Container settings
     pub apple_container: AppleContainerConfig,
@@ -167,6 +193,7 @@ impl Default for Config {
                 default_cni: CniPlugin::Ptp, // Default to PTP for Apple Container compatibility
                 node_kernel_path: None,      // Stock kernel by default; set to enable custom kernel
             },
+            kernel: KernelConfig::default(),
             apple_container: AppleContainerConfig {
                 cli_path: None, // Will be detected automatically
                 runtime_config: RuntimeConfig {

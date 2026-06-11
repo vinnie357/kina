@@ -1,6 +1,7 @@
 pub mod apple_container;
 pub mod apple_provider;
 pub mod cluster;
+pub mod kernel_fetch;
 pub mod kubernetes;
 pub mod provider;
 pub mod types;
