@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use tracing::{debug, info, warn};
 
 use super::types::{
@@ -538,6 +540,163 @@ failSwapOn: false
         hash = join_info.ca_cert_hash,
         worker_ip = worker_ip,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Image injection helpers (kina-12)
+//
+// The `container cp` subcommand silently exits 0 without transferring the
+// file in some container 1.0.0 configurations.  These pure functions
+// build the exec-stdin injection pattern and post-copy verification
+// commands so the caller can detect and abort on a silent no-op.
+// ---------------------------------------------------------------------------
+
+/// Build the exec-stdin argument vector that streams tar bytes into a running
+/// container.  The caller pipes the local tar file to the child's stdin:
+///
+/// ```text
+/// container exec -i <container_id> sh -c 'cat > /tmp/image.tar'
+/// ```
+///
+/// The returned slice starts with `"exec"` (never `"cp"`), includes the `-i`
+/// flag so the child inherits a writable stdin, and embeds the `cat >` shell
+/// redirect so the piped bytes land at `dest_path`.
+#[allow(dead_code)]
+pub fn build_inject_tar_args(container_id: &str, dest_path: &str) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        "-i".to_string(),
+        container_id.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("cat > {dest_path}"),
+    ]
+}
+
+/// Build the argument vector that prints the byte count of a remote file.
+///
+/// ```text
+/// container exec <container_id> sh -c 'wc -c < /tmp/image.tar'
+/// ```
+///
+/// The output (trimmed) is a single integer string suitable for
+/// [`parse_remote_size_output`].
+#[allow(dead_code)]
+pub fn build_remote_size_args(container_id: &str, dest_path: &str) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        container_id.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("wc -c < {dest_path}"),
+    ]
+}
+
+/// Build the argument vector that prints the sha256 digest of a remote file.
+///
+/// ```text
+/// container exec <container_id> sh -c 'sha256sum /tmp/image.tar'
+/// ```
+///
+/// The output is in `sha256sum` format (`<hex>  <path>\n`) and is parsed by
+/// [`parse_remote_sha256_output`].
+#[allow(dead_code)]
+pub fn build_remote_sha256_args(container_id: &str, dest_path: &str) -> Vec<String> {
+    vec![
+        "exec".to_string(),
+        container_id.to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        format!("sha256sum {dest_path}"),
+    ]
+}
+
+/// Return the lowercase hex-encoded SHA-256 digest of `bytes`.
+#[allow(dead_code)]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+/// Parse the output of `wc -c < <path>` (or equivalent) into a `u64` byte
+/// count.  Returns `Err` for empty, whitespace-only, or non-numeric output so
+/// that a missing remote file (which produces no output or `0`) is surfaced as
+/// an explicit error by [`verify_injection`].
+#[allow(dead_code)]
+pub fn parse_remote_size_output(raw: &str) -> anyhow::Result<u64> {
+    let token = raw
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("remote size output is empty or unparseable: {:?}", raw))?;
+    token
+        .parse::<u64>()
+        .map_err(|e| anyhow::anyhow!("remote size output {:?} is not a valid u64: {}", raw, e))
+}
+
+/// Parse the output of `sha256sum <path>` into the leading hex digest token.
+/// `sha256sum` prints `<hex>  <path>\n`; this function returns only the hex
+/// part.
+///
+/// Returns `Err` for empty, whitespace-only, or malformed output (including
+/// tokens that are not exactly 64 lowercase hex characters).  This ensures
+/// that non-`sha256sum` output (e.g. error messages, empty output) is
+/// treated as a verification failure rather than a silently accepted digest.
+#[allow(dead_code)]
+pub fn parse_remote_sha256_output(raw: &str) -> anyhow::Result<String> {
+    let token = raw.split_whitespace().next().ok_or_else(|| {
+        anyhow::anyhow!("remote sha256 output is empty or unparseable: {:?}", raw)
+    })?;
+    // A SHA-256 hex digest is exactly 64 lowercase hex characters.
+    if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow::anyhow!(
+            "remote sha256 output {:?} does not look like a 64-character hex digest (got {:?})",
+            raw,
+            token,
+        ));
+    }
+    Ok(token.to_string())
+}
+
+/// Gate function: compare local file metadata against remote measurements and
+/// return `Err` on any mismatch.
+///
+/// Checks are applied in this order:
+/// 1. Parse `remote_size_raw`; if remote size ≠ `local_len` → hard error.
+/// 2. Parse `remote_sha_raw`; if remote sha ≠ `local_sha` → hard error.
+/// 3. Both match → `Ok(())`.
+///
+/// Passing `remote_size_raw = "0"` against a non-zero `local_len` simulates
+/// the silent `container cp` no-op and causes the function to return `Err`
+/// before `ctr images import` is attempted.
+#[allow(dead_code)]
+pub fn verify_injection(
+    local_len: u64,
+    local_sha: &str,
+    remote_size_raw: &str,
+    remote_sha_raw: &str,
+) -> anyhow::Result<()> {
+    let remote_size = parse_remote_size_output(remote_size_raw)?;
+    if remote_size != local_len {
+        return Err(anyhow::anyhow!(
+            "post-injection size mismatch: expected {} bytes locally but remote reports {} bytes; \
+             the file may not have been transferred (silent exec no-op?)",
+            local_len,
+            remote_size,
+        ));
+    }
+
+    let remote_sha = parse_remote_sha256_output(remote_sha_raw)?;
+    if remote_sha != local_sha {
+        return Err(anyhow::anyhow!(
+            "post-injection sha256 mismatch: expected {} but remote reports {}; \
+             the transferred file is corrupt or incomplete",
+            local_sha,
+            remote_sha,
+        ));
+    }
+
+    Ok(())
 }
 
 /// Client for interacting with Apple Container
@@ -1737,41 +1896,107 @@ impl AppleContainerClient {
             return Err(anyhow::anyhow!("Failed to export image: {}", stderr));
         }
 
-        // Copy the tar file into the container
-        let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args([
-            "cp",
-            &image_tar.to_string_lossy(),
-            &format!("{}:/tmp/image.tar", container_id),
-        ]);
+        // Read the tar bytes to compute local size and digest for post-injection
+        // verification.  Reading into memory is acceptable for node images (~100–500 MB)
+        // on an Apple Silicon dev machine; this also allows a single fs read to compute
+        // both size and sha256 before streaming.
+        let tar_bytes = fs::read(&image_tar)
+            .with_context(|| format!("Failed to read image tar from {}", image_tar.display()));
+        let tar_bytes = match tar_bytes {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = fs::remove_file(&image_tar);
+                return Err(e);
+            }
+        };
+        let local_len = tar_bytes.len() as u64;
+        let local_sha = sha256_hex(&tar_bytes);
 
-        let output = cmd
-            .output()
-            .context("Failed to copy image tar to container")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Clean up the temp file
+        // Inject tar bytes into the container via exec-stdin (`container exec -i
+        // <id> sh -c 'cat > /path'`).  This replaces `container cp` which silently
+        // exits 0 without transferring the file in some container 1.0.0 configurations.
+        let dest_path = "/tmp/image.tar";
+        let inject_args = build_inject_tar_args(container_id, dest_path);
+        let spawn_result = std::process::Command::new(&self.cli_path)
+            .args(&inject_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .with_context(|| {
+                format!(
+                    "Failed to spawn exec-stdin injection for container '{}'",
+                    container_id
+                )
+            });
+        let mut child = match spawn_result {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = fs::remove_file(&image_tar);
+                return Err(e);
+            }
+        };
+
+        // Write tar bytes to child stdin; drop the handle to close stdin so the
+        // `cat >` shell command sees EOF and terminates.
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(&tar_bytes) {
+                let _ = child.wait();
+                let _ = fs::remove_file(&image_tar);
+                return Err(anyhow::anyhow!(
+                    "Failed to write tar bytes to container stdin: {}",
+                    e
+                ));
+            }
+        }
+        // Drop tar_bytes after writing to free memory before waiting.
+        drop(tar_bytes);
+
+        let inject_status = child
+            .wait()
+            .context("Failed to wait for exec-stdin injection")?;
+        if !inject_status.success() {
             let _ = fs::remove_file(&image_tar);
             return Err(anyhow::anyhow!(
-                "Failed to copy image to container: {}",
-                stderr
+                "exec-stdin injection into container '{}' failed (exit {:?})",
+                container_id,
+                inject_status.code(),
             ));
         }
 
-        // Load the image in the container using ctr (containerd CLI)
-        let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args([
-            "exec",
-            container_id,
-            "ctr",
-            "images",
-            "import",
-            "/tmp/image.tar",
-        ]);
+        // Post-injection verification: compare remote size and sha256 against the
+        // local tarball before running ctr images import.  A size mismatch of 0
+        // (or any value ≠ local_len) indicates a silent no-op and aborts with a
+        // hard error so the import step is never attempted on a corrupt/missing file.
+        let size_args = build_remote_size_args(container_id, dest_path);
+        let size_output = std::process::Command::new(&self.cli_path)
+            .args(&size_args)
+            .output()
+            .context("Failed to run remote size check")?;
+        let remote_size_raw = String::from_utf8_lossy(&size_output.stdout).into_owned();
 
+        let sha_args = build_remote_sha256_args(container_id, dest_path);
+        let sha_output = std::process::Command::new(&self.cli_path)
+            .args(&sha_args)
+            .output()
+            .context("Failed to run remote sha256 check")?;
+        let remote_sha_raw = String::from_utf8_lossy(&sha_output.stdout).into_owned();
+
+        if let Err(e) = verify_injection(local_len, &local_sha, &remote_size_raw, &remote_sha_raw) {
+            let _ = fs::remove_file(&image_tar);
+            return Err(e.context(format!(
+                "post-injection verification failed for container '{}'; \
+                 the exec-stdin transfer may have produced an incomplete file",
+                container_id,
+            )));
+        }
+
+        // Import the image inside the container using ctr (containerd CLI).
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_id, "ctr", "images", "import", dest_path]);
         let output = cmd.output().context("Failed to load image in container")?;
 
-        // Clean up the temp file
+        // Clean up the temp file on all paths.
         let _ = fs::remove_file(&image_tar);
 
         if !output.status.success() {
