@@ -49,6 +49,6 @@ All AI assistants working on this project MUST adhere to strict factual accuracy
 
 ### Development Context
 - **Current State**: Phase 1-2 complete (infrastructure, provider, CLI, lifecycle management). Working on multi-node orchestration and advanced features.
-- **Technology Requirements**: macOS 26+, Apple Container 0.5.0+, kubectl, mise, Nushell
+- **Technology Requirements**: macOS 26+, Apple Container 1.0.0+, kubectl, mise, Nushell
 - **Development Priorities**: Multi-node cluster support, CI pipeline with act/colima, advanced networking
 - **Integration Goals**: Kind (Kubernetes in Docker) workflow compatibility using Apple Container technology

@@ -2,7 +2,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/vinnie357/kina)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![Apple Container](https://img.shields.io/badge/Apple%20Container-0.5.0%2B-blue.svg)](https://github.com/apple/container)
+[![Apple Container](https://img.shields.io/badge/Apple%20Container-1.0.0%2B-blue.svg)](https://github.com/apple/container)
 
 **kina** is a Rust CLI tool for running local Kubernetes clusters using Apple Container technology. It provides similar functionality to [kind](https://kind.sigs.k8s.io/) (Kubernetes in Docker) but is optimized for macOS systems, leveraging native Apple Container technology for improved performance and integration.
 
@@ -34,18 +34,26 @@
 
 ### System Requirements
 - **macOS**: 26+ (macOS 15.6 may work with limitations)
-- **Apple Container**: 0.5.0+ (auto-detected and validated at startup)
+- **Apple Container**: 1.0.0+ (auto-detected and validated at startup)
 - **Rust**: 1.70+ (for building from source)
 
 ### Apple Container Installation
 Apple Container is **required** for kina to work. Install it first:
 
-1. **Download**: Get the latest installer from [Apple Container Releases](https://github.com/apple/container/releases)
+**Option A — Homebrew (recommended):**
+```bash
+brew install container
+```
+
+**Option B — Signed pkg installer:**
+1. **Download**: Get the latest signed `.pkg` from [Apple Container Releases](https://github.com/apple/container/releases)
 2. **Install**: Double-click the `.pkg` file and follow the installer prompts
+
+After installing via either method:
 3. **Start Service**: Run `container system start` to start the API server
 4. **Verify**: Check installation with `container --version`
 
-**Note**: kina requires Apple Container **0.5.0 or later**. The version is automatically detected and validated when kina starts. Run `kina` (no arguments) to see your kina and Apple Container versions.
+**Note**: kina requires Apple Container **1.0.0 or later**. The version is automatically detected and validated when kina starts. Run `kina` (no arguments) to see your kina and Apple Container versions.
 
 ### Kubernetes Tools
 - `kubectl` - Kubernetes command-line tool
@@ -90,7 +98,7 @@ mise run install
 # Verify installation (shows kina and Apple Container versions)
 kina
 
-# Check Apple Container availability (REQUIRED, 0.5.0+)
+# Check Apple Container availability (REQUIRED, 1.0.0+)
 mise run container:check  # If using mise
 # OR manually check:
 container --version
@@ -101,7 +109,7 @@ mise run k8s:check  # If using mise
 kubectl version --client
 ```
 
-**⚠️ Important**: Apple Container 0.5.0+ must be available before creating clusters. kina auto-detects and validates the version at startup. Run `kina status` to see Apple Container version information.
+**⚠️ Important**: Apple Container 1.0.0+ must be available before creating clusters. kina auto-detects and validates the version at startup. Run `kina status` to see Apple Container version information.
 
 ## Quick Start
 
@@ -402,7 +410,7 @@ mise run k8s:check                # Verify Kubernetes tools installation
 - Installs cargo-audit for security dependency scanning
 - Creates kina configuration directories (`~/.config/kina`, `~/.local/share/kina`)
 - Installs Kubernetes tools (kubectx, kubens) via mise package manager
-- Verifies Apple Container CLI is available (0.5.0+ required)
+- Verifies Apple Container CLI is available (1.0.0+ required)
 - Checks all tool installations
 
 ### Node Image Building
