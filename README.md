@@ -367,6 +367,8 @@ kina leverages Apple Container technology for running Kubernetes nodes:
 - **Requirements**: Compatible kernel modules
 - **Use Cases**: Complex networking requirements and observability
 
+Cilium full-eBPF mode requires a custom Linux kernel that kina builds (`6.18.5-kina.1`); enable it per cluster with `kina create ... --cni cilium --kernel-path <path/to/vmlinux>`. Stock kernel (PTP) clusters need nothing extra. See [docs/development/custom-kernel.md](docs/development/custom-kernel.md) for build instructions, usage, distribution, and host-kernel gotchas. (A planned future release will fetch the kernel automatically — a one-time ~32 MB download — so `--kernel-path` will not be required; today it is the only supported path.)
+
 ```bash
 # Create cluster with specific CNI
 kina create test-ptp --cni ptp
