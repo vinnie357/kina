@@ -3,6 +3,12 @@ name: Release
 # Triggered by a semver version tag push:
 #   git tag v0.1.0 && git push origin v0.1.0
 #
+# Main-only gate (AC):
+#   Immediately after Checkout, the job verifies that $GITHUB_SHA (the tagged
+#   commit) is an ancestor of origin/main via `git merge-base --is-ancestor`.
+#   A tag pushed from any branch other than main causes the job to fail fast
+#   before any tool setup or build work begins.
+#
 # Tag non-collision proof (AC):
 #   This workflow trigger: tags: ['v[0-9]+.[0-9]+.[0-9]+']
 #     Requires tag to start 'v' + digit. Matches: v0.1.0, v1.10.20
@@ -44,7 +50,19 @@ jobs:
           fetch-depth: 0
 
       # -----------------------------------------------------------------------
-      # 2. Set up mise (local composite action — reuses the same installer as ci.yml)
+      # 2. Verify the tagged commit is on main — fail fast before any tool setup
+      # -----------------------------------------------------------------------
+      - name: Verify tag commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points to ${GITHUB_SHA}, which is not an ancestor of main. Releases are cut from main only."
+            exit 1
+          fi
+          echo "OK: ${GITHUB_SHA} is on main"
+
+      # -----------------------------------------------------------------------
+      # 3. Set up mise (local composite action — reuses the same installer as ci.yml)
       # -----------------------------------------------------------------------
       - name: Set up mise
         uses: ./.github/actions/setup-mise
@@ -59,7 +77,7 @@ jobs:
           echo "$PATH" >> $GITHUB_PATH
 
       # -----------------------------------------------------------------------
-      # 3. Cache Cargo registry and build artifacts
+      # 4. Cache Cargo registry and build artifacts
       # -----------------------------------------------------------------------
       - name: Cache Cargo
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf  # v4.2.2
@@ -73,14 +91,14 @@ jobs:
             cargo-release-${{ runner.os }}-
 
       # -----------------------------------------------------------------------
-      # 4. Build the release binary
+      # 5. Build the release binary
       # -----------------------------------------------------------------------
       - name: Build release binary
         working-directory: kina-cli
         run: cargo build --release
 
       # -----------------------------------------------------------------------
-      # 5. Package the binary as a tar.gz with a sha256 sidecar
+      # 6. Package the binary as a tar.gz with a sha256 sidecar
       #
       #    Asset naming for mise github backend auto-resolution on macOS arm64:
       #      mise asset_matcher.rs macOS regex:  (?i)(?:\b|_)(?:darwin|mac(?:osx?)?|osx)(?:\b|_) -> 'darwin' matches
@@ -98,7 +116,7 @@ jobs:
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
 
       # -----------------------------------------------------------------------
-      # 6. Create GitHub Release and upload assets
+      # 7. Create GitHub Release and upload assets
       # -----------------------------------------------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda  # v2.2.1
