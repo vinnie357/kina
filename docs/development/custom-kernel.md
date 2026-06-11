@@ -123,7 +123,7 @@ target/release/kina create kina-test --workers 2 --cni cilium \
 node_kernel_path = "/path/to/vmlinux"
 ```
 
-Precedence: CLI `--kernel-path` flag > `config.toml` `node_kernel_path` > `None` (stock kernel). Implemented via `select_kernel_path` in `kina-cli/src/config/mod.rs` (lines 57, 168).
+Precedence: CLI `--kernel-path` flag > `config.toml` `node_kernel_path` > `None` (stock kernel). The `node_kernel_path` config field is defined in `kina-cli/src/config/mod.rs` (lines 57, 168); precedence logic is implemented in `select_kernel_path` at `kina-cli/src/core/apple_container.rs:156`, called from `kina-cli/src/cli/cluster.rs:208`.
 
 **Profile coupling:** when `node_kernel_path` resolves to `Some`, kina selects the full-eBPF Cilium install profile (`kubeProxyReplacement=true`, `bpf.masquerade=true`, `bpf.hostLegacyRouting=false`, `hubble.enabled=true`) and passes `--skip-phases=addon/kube-proxy` to kubeadm. When `node_kernel_path` is `None` (stock kernel), the stock workaround profile is used and kube-proxy is retained.
 
