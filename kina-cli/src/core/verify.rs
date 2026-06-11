@@ -31,13 +31,28 @@ pub fn probe_url(node_ip: &str) -> String {
 
 /// Parse the DNS domain from the output of `container system dns list`.
 ///
-/// Takes the first non-blank trimmed line.  Falls back to `"test"` when
-/// the output is empty or contains only whitespace — matching AC1/AC3.
+/// The `container system dns list` command emits a header line (`DOMAIN`) before
+/// the actual domain entries.  This function skips that header and any other
+/// all-uppercase single-word header lines, then returns the first non-blank
+/// trimmed data line.  Falls back to `"test"` when the output is empty, contains
+/// only whitespace, or only the header — matching AC1/AC3.
+///
+/// # Example output from `container system dns list`
+/// ```text
+/// DOMAIN
+/// local
+/// ```
+/// → returns `"local"`.
 pub fn parse_dns_domain(dns_list_output: &str) -> String {
     dns_list_output
         .lines()
         .map(|l| l.trim())
-        .find(|l| !l.is_empty())
+        .find(|l| {
+            // Skip blank lines and the "DOMAIN" column-header emitted by
+            // `container system dns list`.  A header line is all-uppercase ASCII
+            // (e.g. "DOMAIN"); real domain names contain lowercase letters.
+            !l.is_empty() && !l.chars().all(|c| c.is_ascii_uppercase())
+        })
         .unwrap_or("test")
         .to_string()
 }

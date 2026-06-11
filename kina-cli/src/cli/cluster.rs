@@ -272,7 +272,10 @@ impl CreateArgs {
                     println!("{}", notice);
 
                     let cache_dir = kernel_fetch::kernel_cache_dir(&home, &config.kernel.tag);
-                    let url = kernel_fetch::pinned_asset_url();
+                    // Use pinned_download_url() — the GitHub release asset is named "Image",
+                    // not "vmlinux".  The downloaded bytes are stored locally as "vmlinux"
+                    // by install_kernel via kernel_cache_file.
+                    let url = kernel_fetch::pinned_download_url();
 
                     struct HttpFetcher;
                     impl kernel_fetch::KernelFetcher for HttpFetcher {

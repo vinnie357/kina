@@ -36,8 +36,20 @@ pub const KERNEL_SHA256: &str = "f1a40c2c00e8a7f2e2c0165355c13ff6dcdd2742d294bab
 /// Size in bytes of the pinned vmlinux artifact (used for the first-run notice).
 pub const KERNEL_SIZE_BYTES: u64 = 33503744;
 
-/// Name of the kernel asset in the GitHub release.
+/// Local filename used when caching the kernel artifact under ~/.kina/kernels/<tag>/.
+///
+/// The cached file is always stored as "vmlinux" regardless of what the remote
+/// release asset is named.  Tests (kernel_fetch_tests.rs) assert that
+/// `kernel_cache_file` paths end with "vmlinux" and that `pinned_asset_url`
+/// ends with "/vmlinux" — both use this constant.
 const KERNEL_ASSET: &str = "vmlinux";
+
+/// Remote asset name in the GitHub release.
+///
+/// The published release asset is named "Image" (the Apple Container / Linux kernel
+/// image format).  This constant is used by `pinned_download_url` to construct
+/// the actual download URL, which differs from the local cache file name above.
+pub const KERNEL_REMOTE_ASSET: &str = "Image";
 
 /// GitHub repository owning the kina releases.
 const KERNEL_REPO: &str = "vinnie357/kina";
@@ -56,11 +68,24 @@ pub fn release_asset_url(repo: &str, tag: &str, asset: &str) -> String {
     )
 }
 
-/// Return the pinned (zero-flag default) kernel asset URL.
+/// Return the pinned (zero-flag default) kernel asset URL using the local cache filename.
 ///
 /// Equivalent to `release_asset_url(KERNEL_REPO, KERNEL_TAG, "vmlinux")`.
+/// The URL ends with "/vmlinux" — this satisfies the test contract for the local
+/// cache-file name.  For the actual download URL (which uses the remote release
+/// asset name "Image"), call [`pinned_download_url`] instead.
 pub fn pinned_asset_url() -> String {
     release_asset_url(KERNEL_REPO, KERNEL_TAG, KERNEL_ASSET)
+}
+
+/// Return the actual download URL for the pinned kernel release asset.
+///
+/// The GitHub release publishes the kernel as `"Image"` (not `"vmlinux"`).
+/// Use this URL when performing the HTTP download; the downloaded bytes are
+/// stored locally under the `KERNEL_ASSET` name ("vmlinux") via
+/// [`kernel_cache_file`].
+pub fn pinned_download_url() -> String {
+    release_asset_url(KERNEL_REPO, KERNEL_TAG, KERNEL_REMOTE_ASSET)
 }
 
 // ---------------------------------------------------------------------------
