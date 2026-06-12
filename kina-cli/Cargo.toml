@@ -55,9 +55,6 @@ config.workspace = true
 directories.workspace = true
 dirs.workspace = true
 
-# Process Management
-tokio-process.workspace = true
-
 # Network and HTTP
 reqwest.workspace = true
 url.workspace = true

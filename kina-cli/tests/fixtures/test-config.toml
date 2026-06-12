@@ -7,7 +7,9 @@ retain_on_failure = false
 default_cni = "Ptp"
 
 [apple_container]
-cli_path = "/usr/local/bin/container"
+# cli_path intentionally unset so the CLI is resolved via PATH detection,
+# which works across architectures (e.g. /opt/homebrew/bin on Apple Silicon)
+# rather than a hardcoded /usr/local/bin path that only exists on Intel.
 
 [apple_container.runtime_config]
 memory_limit = "2Gi"

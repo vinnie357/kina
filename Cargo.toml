@@ -4,13 +4,16 @@ members = [
 ]
 resolver = "2"
 
+[profile.release]
+strip = "symbols"
+
 [workspace.package]
 version = "0.1.0"
 authors = ["kina contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/vinnie/kina"
-homepage = "https://github.com/vinnie/kina"
-documentation = "https://github.com/vinnie/kina"
+repository = "https://github.com/vinnie357/kina"
+homepage = "https://github.com/vinnie357/kina"
+documentation = "https://github.com/vinnie357/kina"
 keywords = ["kubernetes", "containers", "apple", "cli", "kind"]
 categories = ["command-line-utilities", "development-tools"]
 edition = "2021"
@@ -22,7 +25,7 @@ clap = { version = "4.4", features = ["derive", "cargo", "wrap_help", "string"] 
 
 # Error Handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Logging and Tracing
 tracing = "0.1"
@@ -41,18 +44,15 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-toml = "0.8"
+toml = "1.0"
 
 # Configuration
-config = "0.13"
-directories = "5.0"
-dirs = "5.0"
-
-# Process Management
-tokio-process = "0.2"
+config = "0.15"
+directories = "6.0"
+dirs = "6.0"
 
 # Network and HTTP
-reqwest = { version = "0.11", features = ["json", "stream", "blocking"] }
+reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 url = "2.4"
 
 # Kubernetes Client (for future use)
