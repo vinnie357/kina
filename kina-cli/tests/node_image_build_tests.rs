@@ -10,7 +10,7 @@
 /// WITHOUT modifying this file.
 ///
 /// BINDING VERSION CONSTANTS (from kina-cli/images/Dockerfile ARG defaults):
-///   KUBERNETES_VERSION  = "1.35.5"
+///   KUBERNETES_VERSION  = "1.36.1"
 ///   CONTAINERD_VERSION  = "2.3.1"
 ///   RUNC_VERSION        = "1.4.2"
 ///   CNI_PLUGINS_VERSION = "1.9.1"
@@ -115,7 +115,7 @@ fn build_node_image_arch_defaults_to_arm64() {
     );
 }
 
-/// AC1-4: omitting --kubernetes-version yields the pinned default 1.35.5
+/// AC1-4: omitting --kubernetes-version yields the pinned default 1.36.1
 #[test]
 fn build_node_image_kubernetes_version_default_matches_dockerfile_arg() {
     use kina_cli::cli::BuildNodeImageArgs;
@@ -124,8 +124,8 @@ fn build_node_image_kubernetes_version_default_matches_dockerfile_arg() {
         args.kubernetes_version
             .as_deref()
             .unwrap_or(DEFAULT_KUBERNETES_VERSION),
-        "1.35.5",
-        "omitting --kubernetes-version must yield pinned default 1.35.5 (matches Dockerfile ARG); \
+        "1.36.1",
+        "omitting --kubernetes-version must yield pinned default 1.36.1 (matches Dockerfile ARG); \
          got: {:?}",
         args.kubernetes_version
     );
@@ -226,8 +226,8 @@ fn resolve_build_args_uses_pinned_defaults_when_unset() {
 
     assert_eq!(
         map.get("KUBERNETES_VERSION").map(|s| s.as_str()),
-        Some("1.35.5"),
-        "KUBERNETES_VERSION must default to 1.35.5; got: {:?}",
+        Some("1.36.1"),
+        "KUBERNETES_VERSION must default to 1.36.1; got: {:?}",
         map.get("KUBERNETES_VERSION")
     );
     assert_eq!(
@@ -309,8 +309,8 @@ fn resolve_build_args_extra_build_args_merge_and_override() {
     // Other pinned defaults remain unchanged
     assert_eq!(
         map.get("KUBERNETES_VERSION").map(|s| s.as_str()),
-        Some("1.35.5"),
-        "KUBERNETES_VERSION must remain 1.35.5 when RUNC_VERSION is overridden; got: {:?}",
+        Some("1.36.1"),
+        "KUBERNETES_VERSION must remain 1.36.1 when RUNC_VERSION is overridden; got: {:?}",
         map.get("KUBERNETES_VERSION")
     );
 }
@@ -332,7 +332,7 @@ fn resolve_build_args_extra_build_args_merge_and_override() {
 fn build_command_args_target_dockerfile_and_context() {
     let resolved = resolve_build_args(None, &[]);
     let images_dir = PathBuf::from("/some/repo/kina-cli/images");
-    let args = build_command_args("kina/node:v1.35.5", "arm64", &resolved, false, &images_dir);
+    let args = build_command_args("kina/node:v1.36.1", "arm64", &resolved, false, &images_dir);
 
     let joined = args.join(" ");
 
@@ -358,10 +358,10 @@ fn build_command_args_target_dockerfile_and_context() {
     // Must include -t <tag>
     let has_tag = args
         .windows(2)
-        .any(|w| w[0] == "-t" && w[1] == "kina/node:v1.35.5");
+        .any(|w| w[0] == "-t" && w[1] == "kina/node:v1.36.1");
     assert!(
         has_tag,
-        "build_command_args must include `-t kina/node:v1.35.5`; joined: {}",
+        "build_command_args must include `-t kina/node:v1.36.1`; joined: {}",
         joined
     );
 }
@@ -387,7 +387,7 @@ fn build_command_args_include_arch_platform_passthrough() {
 #[test]
 fn build_command_args_emit_each_build_arg_as_build_arg_flag() {
     let resolved = vec![
-        ("KUBERNETES_VERSION".to_string(), "1.35.5".to_string()),
+        ("KUBERNETES_VERSION".to_string(), "1.36.1".to_string()),
         ("CONTAINERD_VERSION".to_string(), "2.3.1".to_string()),
     ];
     let images_dir = PathBuf::from("/repo/kina-cli/images");
@@ -395,8 +395,8 @@ fn build_command_args_emit_each_build_arg_as_build_arg_flag() {
     let joined = args.join(" ");
 
     assert!(
-        joined.contains("--build-arg") && joined.contains("KUBERNETES_VERSION=1.35.5"),
-        "build_command_args must include `--build-arg KUBERNETES_VERSION=1.35.5`; joined: {}",
+        joined.contains("--build-arg") && joined.contains("KUBERNETES_VERSION=1.36.1"),
+        "build_command_args must include `--build-arg KUBERNETES_VERSION=1.36.1`; joined: {}",
         joined
     );
     assert!(
@@ -437,9 +437,9 @@ fn build_command_args_no_cache_adds_no_cache_flag() {
 /// AC3-15: build_inputs_hash is deterministic for identical inputs
 #[test]
 fn content_hash_is_deterministic_for_same_inputs() {
-    let dockerfile_bytes = b"FROM debian:13-slim\nARG KUBERNETES_VERSION=1.35.5\n";
-    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.35.5".to_string())];
-    let tag = "kina/node:v1.35.5";
+    let dockerfile_bytes = b"FROM debian:13-slim\nARG KUBERNETES_VERSION=1.36.1\n";
+    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.36.1".to_string())];
+    let tag = "kina/node:v1.36.1";
 
     let h1 = build_inputs_hash(dockerfile_bytes, &resolved, tag);
     let h2 = build_inputs_hash(dockerfile_bytes, &resolved, tag);
@@ -461,9 +461,9 @@ fn content_hash_is_deterministic_for_same_inputs() {
 #[test]
 fn content_hash_changes_when_tag_changes() {
     let dockerfile_bytes = b"FROM debian:13-slim\n";
-    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.35.5".to_string())];
+    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.36.1".to_string())];
 
-    let h1 = build_inputs_hash(dockerfile_bytes, &resolved, "kina/node:v1.35.5");
+    let h1 = build_inputs_hash(dockerfile_bytes, &resolved, "kina/node:v1.36.1");
     let h2 = build_inputs_hash(dockerfile_bytes, &resolved, "kina/node:v1.99.0");
 
     assert_ne!(
@@ -477,9 +477,9 @@ fn content_hash_changes_when_tag_changes() {
 #[test]
 fn content_hash_changes_when_build_arg_changes() {
     let dockerfile_bytes = b"FROM debian:13-slim\n";
-    let tag = "kina/node:v1.35.5";
+    let tag = "kina/node:v1.36.1";
 
-    let resolved1 = vec![("KUBERNETES_VERSION".to_string(), "1.35.5".to_string())];
+    let resolved1 = vec![("KUBERNETES_VERSION".to_string(), "1.36.1".to_string())];
     let resolved2 = vec![("KUBERNETES_VERSION".to_string(), "1.99.0".to_string())];
 
     let h1 = build_inputs_hash(dockerfile_bytes, &resolved1, tag);
@@ -495,8 +495,8 @@ fn content_hash_changes_when_build_arg_changes() {
 /// AC3-18: different Dockerfile bytes produce a different content hash
 #[test]
 fn content_hash_changes_when_dockerfile_bytes_change() {
-    let tag = "kina/node:v1.35.5";
-    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.35.5".to_string())];
+    let tag = "kina/node:v1.36.1";
+    let resolved = vec![("KUBERNETES_VERSION".to_string(), "1.36.1".to_string())];
 
     let h1 = build_inputs_hash(b"FROM debian:13-slim\n", &resolved, tag);
     let h2 = build_inputs_hash(b"FROM debian:bookworm-slim\n", &resolved, tag);
@@ -703,7 +703,7 @@ fn no_cache_run_refreshes_entry_after_rebuild() {
 /// AC4-25: parse_image_list over JSON containing the built tag returns the entry
 #[test]
 fn post_build_verification_parses_image_list_json_present() {
-    let json = r#"[{"name":"kina/node:v1.35.5","id":"sha256:abc123","size":"500MB"}]"#;
+    let json = r#"[{"name":"kina/node:v1.36.1","id":"sha256:abc123","size":"500MB"}]"#;
     let list = parse_image_list(json).expect("parse_image_list must succeed for valid JSON");
 
     assert_eq!(
@@ -713,8 +713,8 @@ fn post_build_verification_parses_image_list_json_present() {
         list.len()
     );
     assert!(
-        image_present(&list, "kina/node:v1.35.5"),
-        "image_present must return true when tag 'kina/node:v1.35.5' is in the parsed list"
+        image_present(&list, "kina/node:v1.36.1"),
+        "image_present must return true when tag 'kina/node:v1.36.1' is in the parsed list"
     );
 }
 
@@ -725,8 +725,8 @@ fn post_build_verification_absent_image_is_failure() {
     let list = parse_image_list(json).expect("parse_image_list must succeed for valid JSON");
 
     assert!(
-        !image_present(&list, "kina/node:v1.35.5"),
-        "image_present must return false when 'kina/node:v1.35.5' is not in the list"
+        !image_present(&list, "kina/node:v1.36.1"),
+        "image_present must return false when 'kina/node:v1.36.1' is not in the list"
     );
 }
 
@@ -877,8 +877,8 @@ fn source_guard_builder_uses_images_dockerfile_path() {
 #[test]
 fn pinned_defaults_match_dockerfile_args() {
     assert_eq!(
-        DEFAULT_KUBERNETES_VERSION, "1.35.5",
-        "DEFAULT_KUBERNETES_VERSION must be 1.35.5 (matches Dockerfile ARG); got: {}",
+        DEFAULT_KUBERNETES_VERSION, "1.36.1",
+        "DEFAULT_KUBERNETES_VERSION must be 1.36.1 (matches Dockerfile ARG); got: {}",
         DEFAULT_KUBERNETES_VERSION
     );
     assert_eq!(

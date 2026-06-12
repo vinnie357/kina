@@ -524,11 +524,11 @@ pub fn node_cap_args() -> Vec<&'static str> {
     vec!["--cap-add", "ALL"]
 }
 
-/// Generate kubeadm init configuration YAML (v1beta4, K8s v1.35.5).
+/// Generate kubeadm init configuration YAML (v1beta4, K8s v1.36.1).
 ///
 /// Emits three stanzas separated by "---":
 ///   1. InitConfiguration  — advertise address, criSocket, kubeletExtraArgs (list form)
-///   2. ClusterConfiguration — kubernetesVersion v1.35.5, apiServer/controllerManager extraArgs (list form)
+///   2. ClusterConfiguration — kubernetesVersion v1.36.1, apiServer/controllerManager extraArgs (list form)
 ///   3. JoinConfiguration  — criSocket, kubeletExtraArgs (list form)
 ///
 /// Followed by KubeletConfiguration and KubeProxyConfiguration stanzas.
@@ -556,7 +556,7 @@ nodeRegistration:
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.35.5
+kubernetesVersion: v1.36.1
 clusterName: "{cluster_name}"
 controlPlaneEndpoint: "{vm_ip}:6443"
 apiServer:

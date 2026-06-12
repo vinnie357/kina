@@ -1,6 +1,6 @@
 #!/usr/bin/env nu
 
-let image_tag = "kina/node:v1.35.5"
+let image_tag = "kina/node:v1.36.1"
 print $"Testing node image: ($image_tag)"
 
 let images = (do { ^container image list } | complete)

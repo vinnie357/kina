@@ -21,7 +21,7 @@ pub struct CreateArgs {
     pub name: String,
 
     /// Container image to use for the cluster
-    #[arg(long, default_value = "kindest/node:v1.35.5")]
+    #[arg(long, default_value = "kindest/node:v1.36.1")]
     pub image: String,
 
     /// Configuration file for cluster creation

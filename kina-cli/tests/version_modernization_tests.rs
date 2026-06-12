@@ -34,7 +34,8 @@
 ///   4. JoinConfiguration — worker join (inside generate_worker_join_config)
 ///
 /// Version authority (VERSION CURRENCY AUDIT comment on kina-2, 2026-06-10):
-///   K8s: v1.35.5 (kindest/node:v1.35.5 — NOT v1.35.4 which does not exist)
+///   K8s: v1.36.1 — kindest/node:v1.36.1 (default) and kina/node:v1.36.1 (custom) in sync
+///        (kindest tag v1.36.0 does not exist — verified 404; v1.36.1 is the valid tag)
 ///   kubeadm API: v1beta4 (map -> list migration for kubeletExtraArgs + extraArgs)
 ///   cilium stays 1.18.10 (kina-3 decision, do NOT bump)
 ///   nginx-ingress: 5.5.0
@@ -340,24 +341,24 @@ fn b8_init_no_map_form_hostpath() {
 }
 
 // ===========================================================================
-// GROUP C — kubernetesVersion v1.35.5
+// GROUP C — kubernetesVersion v1.36.1
 // ===========================================================================
 
-/// C1 — init ClusterConfiguration contains 'kubernetesVersion: v1.35.5'.
+/// C1 — init ClusterConfiguration contains 'kubernetesVersion: v1.36.1'.
 #[test]
-fn c1_kubernetes_version_v1_35_5() {
+fn c1_kubernetes_version_v1_36_1() {
     let config = test_init_config();
     assert!(
-        config.contains("kubernetesVersion: v1.35.5"),
-        "init ClusterConfiguration must contain 'kubernetesVersion: v1.35.5'; got:\n{}",
+        config.contains("kubernetesVersion: v1.36.1"),
+        "init ClusterConfiguration must contain 'kubernetesVersion: v1.36.1'; got:\n{}",
         config
     );
 }
 
-/// C2 — NEGATIVE: init config does NOT contain 'v1.31.0' (old) nor 'v1.35.4'
-///      (the nonexistent kindest/node tag — explicit guard per VERSION CURRENCY AUDIT).
+/// C2 — NEGATIVE: init config does NOT contain 'v1.31.0' (old) nor 'v1.36.0'
+///      (the nonexistent kindest/node tag — kind skipped .0 and published v1.36.1).
 #[test]
-fn c2_no_v1_31_0_and_no_nonexistent_v1_35_4() {
+fn c2_no_v1_31_0_and_no_nonexistent_v1_36_0() {
     let config = test_init_config();
     assert!(
         !config.contains("v1.31.0"),
@@ -365,21 +366,21 @@ fn c2_no_v1_31_0_and_no_nonexistent_v1_35_4() {
         config
     );
     assert!(
-        !config.contains("v1.35.4"),
-        "init config must NOT contain 'v1.35.4' (nonexistent kindest/node tag per audit); got:\n{}",
+        !config.contains("v1.36.0"),
+        "init config must NOT contain 'v1.36.0' (nonexistent kindest/node tag; use v1.36.1); got:\n{}",
         config
     );
 }
 
 // ===========================================================================
-// GROUP D — default image kindest/node:v1.35.5 (CLI + config defaults)
+// GROUP D — default image kindest/node:v1.36.1 (CLI + config defaults)
 //            + stale default_version fix at config/mod.rs:184
 // ===========================================================================
 
 /// D1 — (CLI default) source-grep cli/cluster.rs: --image default_value is
-///      'kindest/node:v1.35.5' and NOT 'kindest/node:v1.31.0'.
+///      'kindest/node:v1.36.1' and NOT 'kindest/node:v1.31.0'.
 #[test]
-fn d1_cli_default_image_v1_35_5() {
+fn d1_cli_default_image_v1_36_1() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let src_path = std::path::Path::new(manifest_dir).join("src/cli/cluster.rs");
     let src = match std::fs::read_to_string(&src_path) {
@@ -387,8 +388,8 @@ fn d1_cli_default_image_v1_35_5() {
         Err(e) => panic!("cannot read src/cli/cluster.rs for guard test: {}", e),
     };
     assert!(
-        src.contains("kindest/node:v1.35.5"),
-        "cli/cluster.rs --image default_value must be 'kindest/node:v1.35.5'; got source:\n{}",
+        src.contains("kindest/node:v1.36.1"),
+        "cli/cluster.rs --image default_value must be 'kindest/node:v1.36.1'; got source:\n{}",
         &src[..src.len().min(500)]
     );
     assert!(
@@ -397,13 +398,13 @@ fn d1_cli_default_image_v1_35_5() {
     );
 }
 
-/// D2 — (config default_image) Config::default().cluster.default_image == 'kindest/node:v1.35.5'.
+/// D2 — (config default_image) Config::default().cluster.default_image == 'kindest/node:v1.36.1'.
 #[test]
-fn d2_config_default_image_v1_35_5() {
+fn d2_config_default_image_v1_36_1() {
     let cfg = Config::default();
     assert_eq!(
-        cfg.cluster.default_image, "kindest/node:v1.35.5",
-        "Config::default().cluster.default_image must be 'kindest/node:v1.35.5'"
+        cfg.cluster.default_image, "kindest/node:v1.36.1",
+        "Config::default().cluster.default_image must be 'kindest/node:v1.36.1'"
     );
     assert_ne!(
         cfg.cluster.default_image, "kindest/node:v1.31.0",
@@ -411,14 +412,14 @@ fn d2_config_default_image_v1_35_5() {
     );
 }
 
-/// D3 — (stale default_version) Config::default().kubernetes.default_version == 'v1.35.5'.
+/// D3 — (stale default_version) Config::default().kubernetes.default_version == 'v1.36.1'.
 ///      Fixes config/mod.rs:184 stale v1.28.0.
 #[test]
-fn d3_config_default_version_v1_35_5() {
+fn d3_config_default_version_v1_36_1() {
     let cfg = Config::default();
     assert_eq!(
-        cfg.kubernetes.default_version, "v1.35.5",
-        "Config::default().kubernetes.default_version must be 'v1.35.5' (was stale 'v1.28.0')"
+        cfg.kubernetes.default_version, "v1.36.1",
+        "Config::default().kubernetes.default_version must be 'v1.36.1' (was stale 'v1.28.0')"
     );
     assert_ne!(
         cfg.kubernetes.default_version, "v1.28.0",
@@ -426,15 +427,16 @@ fn d3_config_default_version_v1_35_5() {
     );
 }
 
-/// D4 — NEGATIVE guard: Config::default().cluster.default_image is NOT 'kina/node:v1.35.4'.
-///      PR #14 used a custom kina/node image as default — kina stays kindest/node.
+/// D4 — NEGATIVE guard: Config::default().cluster.default_image is NOT 'kina/node:v1.36.1'.
+///      The custom kina/node image is opt-in (Cilium/custom-kernel path); the default
+///      stays kindest/node even though both images are now synced at v1.36.1.
 #[test]
 fn d4_config_default_image_not_kina_node() {
     let cfg = Config::default();
     assert_ne!(
-        cfg.cluster.default_image, "kina/node:v1.35.4",
-        "Config::default().cluster.default_image must NOT be 'kina/node:v1.35.4' \
-         (reject PR #14 custom-image default; kina uses kindest/node)"
+        cfg.cluster.default_image, "kina/node:v1.36.1",
+        "Config::default().cluster.default_image must NOT be 'kina/node:v1.36.1' \
+         (custom image is opt-in; the default uses kindest/node)"
     );
 }
 
@@ -616,9 +618,9 @@ fn f2_nginx_ingress_no_5_1_1_uncommented() {
 // OPTIONAL GROUP G — source-grep guards for non-Rust files (defense-in-depth)
 // ===========================================================================
 
-/// G1 — OPTIONAL: images/Dockerfile contains KUBERNETES_VERSION 1.35.5 and NOT 1.31.0.
+/// G1 — OPTIONAL: images/Dockerfile contains KUBERNETES_VERSION 1.36.1 and NOT 1.31.0.
 #[test]
-fn g1_dockerfile_k8s_1_35_5_optional() {
+fn g1_dockerfile_k8s_1_36_1_optional() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let path = std::path::Path::new(manifest_dir).join("images/Dockerfile");
     let content = match std::fs::read_to_string(&path) {
@@ -626,8 +628,8 @@ fn g1_dockerfile_k8s_1_35_5_optional() {
         Err(e) => panic!("cannot read images/Dockerfile: {}", e),
     };
     assert!(
-        content.contains("1.35.5"),
-        "images/Dockerfile must contain '1.35.5' for KUBERNETES_VERSION; got (excerpt):\n{}",
+        content.contains("1.36.1"),
+        "images/Dockerfile must contain '1.36.1' for KUBERNETES_VERSION; got (excerpt):\n{}",
         &content[..content.len().min(800)]
     );
     assert!(

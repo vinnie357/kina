@@ -209,7 +209,7 @@ impl Default for Config {
         Self {
             cluster: ClusterDefaults {
                 default_name: "kina".to_string(),
-                default_image: "kindest/node:v1.35.5".to_string(),
+                default_image: "kindest/node:v1.36.1".to_string(),
                 default_wait_timeout: 300, // 5 minutes
                 data_dir: data_dir.clone(),
                 retain_on_failure: false,
@@ -235,7 +235,7 @@ impl Default for Config {
                 },
             },
             kubernetes: KubernetesConfig {
-                default_version: "v1.35.5".to_string(),
+                default_version: "v1.36.1".to_string(),
                 kubectl_path: None, // Will be detected automatically
                 default_namespace: "default".to_string(),
                 kubeconfig_dir: config_dir.join("kubeconfig"),
