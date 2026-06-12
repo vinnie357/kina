@@ -43,9 +43,11 @@ fn cargo_metadata_workspace_version_is_0_1_0() {
     };
 
     // Parse with the `toml` crate (already a workspace dep) to get the structured value.
-    let doc: toml::Value = cargo_toml_src
-        .parse()
-        .expect("root Cargo.toml must be valid TOML");
+    // Use `toml::from_str` (deserializes a whole document) rather than the `FromStr`
+    // impl: in toml 1.0 `str::parse::<toml::Value>` parses only a single value and
+    // rejects a multi-table document.
+    let doc: toml::Value =
+        toml::from_str(&cargo_toml_src).expect("root Cargo.toml must be valid TOML");
 
     let version = doc
         .get("workspace")
