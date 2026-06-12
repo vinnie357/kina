@@ -34,12 +34,12 @@ pub enum Arch {
 #[derive(Parser, Debug)]
 #[command(name = "node-image")]
 pub struct BuildNodeImageArgs {
-    /// Kubernetes version to embed (e.g. 1.35.5).
+    /// Kubernetes version to embed (e.g. 1.36.1).
     /// Defaults to the pinned constant matching the Dockerfile ARG.
     #[arg(long)]
     pub kubernetes_version: Option<String>,
 
-    /// Tag to apply to the built image (e.g. kina/node:v1.35.5)
+    /// Tag to apply to the built image (e.g. kina/node:v1.36.1)
     #[arg(long, required = true)]
     pub tag: String,
 

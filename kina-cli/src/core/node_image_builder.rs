@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// Pinned default Kubernetes version (matches Dockerfile `ARG KUBERNETES_VERSION`).
-pub const DEFAULT_KUBERNETES_VERSION: &str = "1.35.5";
+pub const DEFAULT_KUBERNETES_VERSION: &str = "1.36.1";
 
 /// Pinned default containerd version (matches Dockerfile `ARG CONTAINERD_VERSION`).
 pub const DEFAULT_CONTAINERD_VERSION: &str = "2.3.1";
@@ -73,7 +73,7 @@ pub enum BuildDecision {
 /// A single entry from `container image list --format json`.
 #[derive(Debug, serde::Deserialize)]
 pub struct ImageEntry {
-    /// Image name / tag (e.g. `kina/node:v1.35.5`).
+    /// Image name / tag (e.g. `kina/node:v1.36.1`).
     pub name: String,
 
     /// Image ID (e.g. `sha256:abc123…`).  Optional — field may be absent.

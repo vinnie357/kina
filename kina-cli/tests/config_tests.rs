@@ -81,7 +81,7 @@ fn test_default_config() {
     let config = Config::default();
 
     assert_eq!(config.cluster.default_name, "kina");
-    assert_eq!(config.cluster.default_image, "kindest/node:v1.35.5");
+    assert_eq!(config.cluster.default_image, "kindest/node:v1.36.1");
     assert_eq!(config.kubernetes.default_namespace, "default");
     assert_eq!(config.logging.level, "info");
 }
