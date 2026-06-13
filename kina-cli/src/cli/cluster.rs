@@ -636,20 +636,7 @@ impl InstallArgs {
     async fn install_nginx_ingress(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         info!("Installing NGINX Ingress Controller (nginx.org) with complete deployment");
 
-        // Use the kubeconfig file path directly instead of content
-        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
-        let kubeconfig_path = std::path::Path::new(&home_dir)
-            .join(".kube")
-            .join(&self.cluster);
-
-        if !kubeconfig_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Kubeconfig file not found: {}",
-                kubeconfig_path.display()
-            ));
-        }
-
-        let kubeconfig_str = kubeconfig_path.to_string_lossy();
+        let kubeconfig_str = kubeconfig_for(&self.cluster)?;
 
         // Nginx-ingress manifests embedded in the binary — works from any directory (AC2).
         let manifests: &[(&str, &str)] = &[
@@ -693,44 +680,7 @@ impl InstallArgs {
                 description
             );
 
-            let mut child = std::process::Command::new("kubectl")
-                .args(["--kubeconfig", &kubeconfig_str, "apply", "-f", "-"])
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context(format!("Failed to spawn kubectl for: {}", description))?;
-
-            if let Some(stdin) = child.stdin.take() {
-                let mut stdin = stdin;
-                use std::io::Write as _;
-                stdin
-                    .write_all(manifest_content.as_bytes())
-                    .context("Failed to write manifest to kubectl stdin")?;
-            }
-
-            let output = child
-                .wait_with_output()
-                .context(format!("Failed to wait for kubectl: {}", description))?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-
-                // Some resources might already exist or have expected warnings
-                if stderr.contains("already exists") || stderr.contains("Warning") {
-                    info!("Applied {} (with warnings/already exists)", description);
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Failed to apply {}: {}\nStdout: {}",
-                        description,
-                        stderr,
-                        stdout
-                    ));
-                }
-            } else {
-                info!("Successfully applied {}", description);
-            }
+            apply_manifest_via_kubectl(&kubeconfig_str, manifest_content, description)?;
 
             // Small delay between manifest applications
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -748,19 +698,7 @@ impl InstallArgs {
     async fn install_demo_app(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         info!("Installing demo application to cluster '{}'", self.cluster);
 
-        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
-        let kubeconfig_path = std::path::Path::new(&home_dir)
-            .join(".kube")
-            .join(&self.cluster);
-
-        if !kubeconfig_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Kubeconfig file not found: {}",
-                kubeconfig_path.display()
-            ));
-        }
-
-        let kubeconfig_str = kubeconfig_path.to_string_lossy();
+        let kubeconfig_str = kubeconfig_for(&self.cluster)?;
 
         // Detect DNS domain from `container system dns list`; fall back to "test".
         let dns_domain = {
@@ -785,35 +723,7 @@ impl InstallArgs {
             self.cluster, dns_domain
         );
 
-        let mut child = std::process::Command::new("kubectl")
-            .args(["--kubeconfig", &kubeconfig_str, "apply", "-f", "-"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .context("Failed to spawn kubectl for demo-app")?;
-
-        if let Some(stdin) = child.stdin.take() {
-            let mut stdin = stdin;
-            use std::io::Write as _;
-            stdin
-                .write_all(rendered.as_bytes())
-                .context("Failed to write demo-app manifest to kubectl stdin")?;
-        }
-
-        let output = child
-            .wait_with_output()
-            .context("Failed to wait for kubectl (demo-app)")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            return Err(anyhow::anyhow!(
-                "Failed to apply demo-app manifest: {}\nStdout: {}",
-                stderr,
-                stdout_str
-            ));
-        }
+        apply_manifest_via_kubectl(&kubeconfig_str, &rendered, "demo-app manifest")?;
 
         info!("Demo app applied; waiting for pods to be Ready...");
 
@@ -848,6 +758,71 @@ impl InstallArgs {
 
         Ok(())
     }
+}
+
+/// Resolve the kubeconfig file path for an addon's target cluster.
+///
+/// Kubeconfigs live at `$HOME/.kube/<cluster>`. Returns the path as an owned
+/// `String`, or an error if `HOME` is unset or the file is missing.
+fn kubeconfig_for(cluster: &str) -> Result<String> {
+    let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
+    let path = std::path::Path::new(&home_dir).join(".kube").join(cluster);
+    if !path.exists() {
+        return Err(anyhow::anyhow!(
+            "Kubeconfig file not found: {}",
+            path.display()
+        ));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Apply a single manifest by piping it to `kubectl apply -f -`.
+///
+/// `description` is used only for logging and error context. Applies are
+/// treated as idempotent: a non-zero exit whose stderr mentions `already
+/// exists` or `Warning` is logged and tolerated rather than failing, so
+/// re-running an install is safe.
+fn apply_manifest_via_kubectl(kubeconfig: &str, manifest: &str, description: &str) -> Result<()> {
+    let mut child = std::process::Command::new("kubectl")
+        .args(["--kubeconfig", kubeconfig, "apply", "-f", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context(format!("Failed to spawn kubectl for: {}", description))?;
+
+    if let Some(stdin) = child.stdin.take() {
+        let mut stdin = stdin;
+        use std::io::Write as _;
+        stdin
+            .write_all(manifest.as_bytes())
+            .context("Failed to write manifest to kubectl stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .context(format!("Failed to wait for kubectl: {}", description))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Some resources might already exist or have expected warnings.
+        if stderr.contains("already exists") || stderr.contains("Warning") {
+            info!("Applied {} (with warnings/already exists)", description);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Failed to apply {}: {}\nStdout: {}",
+                description,
+                stderr,
+                stdout
+            ));
+        }
+    } else {
+        info!("Successfully applied {}", description);
+    }
+
+    Ok(())
 }
 
 /// Args and implementation for `kina verify [cluster]`.
@@ -1730,5 +1705,44 @@ impl From<CniPluginArg> for CniPlugin {
             CniPluginArg::Ptp => CniPlugin::Ptp,
             CniPluginArg::Cilium => CniPlugin::Cilium,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kubeconfig_for_nonexistent_cluster() {
+        let result = kubeconfig_for("__kina_test_nonexistent_cluster_abc123__");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("not found") || msg.contains("HOME"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_kubeconfig_for_existing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let kube_dir = tmp.path().join(".kube");
+        std::fs::create_dir_all(&kube_dir).unwrap();
+        std::fs::write(kube_dir.join("test-cluster"), b"kubeconfig").unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        // Safety: this test must not run concurrently with other tests that read HOME.
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let result = kubeconfig_for("test-cluster");
+
+        match old_home {
+            Some(h) => unsafe { std::env::set_var("HOME", h) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().ends_with("test-cluster"));
     }
 }
