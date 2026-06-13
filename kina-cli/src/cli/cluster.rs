@@ -206,6 +206,9 @@ pub enum AddonType {
     /// Demo application (kina-demo-app with ingress)
     #[value(name = "demo-app")]
     DemoApp,
+    /// Kubernetes Metrics Server (enables `kubectl top` and HPA)
+    #[value(name = "metrics-server")]
+    MetricsServer,
 }
 
 /// Verify a cluster's health end-to-end
@@ -624,6 +627,9 @@ impl InstallArgs {
             AddonType::DemoApp => {
                 self.install_demo_app(&cluster_manager).await?;
             }
+            AddonType::MetricsServer => {
+                self.install_metrics_server(&cluster_manager).await?;
+            }
         }
 
         println!(
@@ -756,6 +762,26 @@ impl InstallArgs {
             }
         }
 
+        Ok(())
+    }
+
+    async fn install_metrics_server(&self, _cluster_manager: &ClusterManager) -> Result<()> {
+        // metrics-server release bundled with this manifest.
+        const VERSION: &str = "v0.8.1";
+        info!("Installing metrics-server {}", VERSION);
+
+        let kubeconfig_str = kubeconfig_for(&self.cluster)?;
+
+        // metrics-server manifest embedded in the binary — works from any directory.
+        // The bundled manifest sets --kubelet-insecure-tls so it works against
+        // kina/kind-style nodes whose kubelet serving certs are self-signed.
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/metrics-server/components.yaml"),
+            "metrics-server components",
+        )?;
+
+        info!("metrics-server {} installed successfully", VERSION);
         Ok(())
     }
 }
