@@ -119,6 +119,11 @@ description = "Create multi-node integration test cluster (1 control-plane + 2 w
 run = "nu scripts/test-cluster-multi.nu"
 timeout = "15m"
 
+[tasks."test:cluster:ptp-dns"]
+description = "Regression test: multi-node PTP cross-node DNS (worker pod must resolve via CoreDNS on the control-plane). Self-contained: creates, probes, and cleans up."
+run = "nu scripts/test-cluster-ptp-dns.nu"
+timeout = "15m"
+
 [tasks."test:cluster:validate"]
 description = "Validate integration test cluster by testing the demo app"
 run = "nu scripts/test-cluster-validate.nu"
