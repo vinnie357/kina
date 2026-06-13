@@ -1,3 +1,6 @@
+[settings]
+env_shell_expand = true
+
 [env]
 RUST_LOG = "info"
 RUST_BACKTRACE = "1"
@@ -9,8 +12,10 @@ rust = "stable"
 kubectx = "latest"
 kubens = "latest"
 cilium-cli = "0.19.4"
-"ubi:nushell/nushell" = { version = "0.108.0", exe = "nu" }
-act = "0.2.82"
+"github:nushell/nushell" = { version = "0.113.1", exe = "nu" }
+act = "0.2.89"
+"cargo:cargo-audit" = "0.22.2"
+"cargo:cargo-tarpaulin" = "0.35.4"
 
 # ============================================================================
 # BUILD & DEVELOPMENT
@@ -48,6 +53,11 @@ run = "cargo install --path kina-cli"
 [tasks.fmt]
 description = "Format code with rustfmt"
 run = "cargo fmt"
+dir = "kina-cli"
+
+[tasks."fmt:check"]
+description = "Check code formatting without modifying files"
+run = "cargo fmt -- --check"
 dir = "kina-cli"
 
 [tasks.lint]
@@ -111,28 +121,34 @@ dir = "kina-cli"
 
 [tasks."test:cluster"]
 description = "Create integration test cluster with ingress and demo app"
+depends = ["container:start"]
 run = "nu scripts/test-cluster.nu"
 timeout = "10m"
 
 [tasks."test:cluster:multi"]
 description = "Create multi-node integration test cluster (1 control-plane + 2 workers). Env: KINA_TEST_CNI (ptp|cilium, default ptp), KINA_TEST_KERNEL_PATH (path to custom kernel, optional)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-multi.nu"
 timeout = "15m"
 
 [tasks."test:cluster:validate"]
 description = "Validate integration test cluster by testing the demo app"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-validate.nu"
 
 [tasks."test:cluster:hosts"]
 description = "Add demo cluster worker IPs to /etc/hosts for browser testing (requires sudo)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-hosts.nu"
 
 [tasks."test:cluster:hosts:clean"]
 description = "Remove kina entries from /etc/hosts"
+depends = ["container:start"]
 run = "KINA_HOSTS_CLEAN=1 nu scripts/test-cluster-hosts.nu"
 
 [tasks."test:cluster:cleanup"]
 description = "Clean up integration test clusters (removes demo-* clusters)"
+depends = ["container:start"]
 run = "nu scripts/test-cluster-cleanup.nu"
 
 # GitHub Actions local testing
@@ -173,6 +189,10 @@ run = "nu scripts/kina-use.nu"
 # CONTAINER & IMAGE MANAGEMENT
 # ============================================================================
 
+[tasks."container:start"]
+description = "Ensure Apple Container system is running, starting it if necessary"
+run = "nu scripts/container-start.nu"
+
 [tasks."container:check"]
 description = "Check Apple Container availability"
 run = """
@@ -188,14 +208,17 @@ if (which container | is-not-empty) {
 
 [tasks."image:build"]
 description = "Build custom Kubernetes node image"
+depends = ["container:start"]
 run = "nu scripts/image-build.nu"
 
 [tasks."image:list"]
 description = "List available container images"
+depends = ["container:start"]
 run = "container image list"
 
 [tasks."image:test"]
 description = "Test the custom node image"
+depends = ["container:start"]
 run = "nu scripts/image-test.nu"
 
 [tasks."image:validate"]
@@ -204,6 +227,7 @@ depends = ["image:build", "image:test"]
 
 [tasks."image:clean"]
 description = "Clean up unused container images"
+depends = ["container:start"]
 run = "nu -c 'let r = (do { ^container image prune -f } | complete); if $r.exit_code != 0 { print \"No images to clean\" } else { print $r.stdout }'"
 
 # ============================================================================
@@ -253,6 +277,7 @@ run = [
 
 [tasks.gitleaks]
 description = "Run gitleaks secret scanner (Apple Container runtime)"
+depends = ["container:start"]
 run = "nu scripts/gitleaks.nu"
 
 [tasks."gitleaks:docker"]
