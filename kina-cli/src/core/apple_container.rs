@@ -3172,7 +3172,10 @@ kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
 
     #[test]
     fn format_created_reformats_iso8601() {
-        assert_eq!(format_created("2026-06-14T21:52:43Z"), "2026-06-14 21:52 UTC");
+        assert_eq!(
+            format_created("2026-06-14T21:52:43Z"),
+            "2026-06-14 21:52 UTC"
+        );
     }
 
     #[test]
