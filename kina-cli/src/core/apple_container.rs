@@ -988,6 +988,10 @@ impl AppleContainerClient {
         self.install_cni_plugin(&cp_name, cni.clone(), options.node_kernel_path.as_deref())
             .await?;
 
+        // Track every node and its VM IP so PTP cross-node routing can be set up
+        // once all workers have joined and been assigned pod CIDRs.
+        let mut all_nodes: Vec<(String, String)> = vec![(cp_name.clone(), cp_ip.clone())];
+
         // 6. Create and join worker nodes sequentially
         for i in 0..worker_count {
             // KIND convention: first worker is {name}-worker, subsequent are {name}-worker-N
@@ -1026,6 +1030,24 @@ impl AppleContainerClient {
             // Use the resolved cni (via select_cni) so --cni flag is honoured per-worker too.
             if matches!(cni, CniPlugin::Ptp) {
                 self.install_ptp_cni(&worker_name).await?;
+            }
+
+            all_nodes.push((worker_name.clone(), worker_ip.clone()));
+        }
+
+        // For PTP, reconfigure each node with its per-node pod CIDR and add cross-node
+        // routes so pods on workers can reach CoreDNS (and other cross-node pods). This
+        // must run after all workers have joined so every node has an assigned podCIDR.
+        // A routing failure is non-fatal: the cluster is usable for same-node workloads.
+        if matches!(cni, CniPlugin::Ptp) && all_nodes.len() > 1 {
+            if let Err(e) = self
+                .configure_ptp_cross_node_routing(&cp_name, &all_nodes)
+                .await
+            {
+                warn!(
+                    "PTP cross-node routing setup failed (DNS may not work on workers): {}",
+                    e
+                );
             }
         }
 
@@ -2508,38 +2530,59 @@ impl AppleContainerClient {
         }
     }
 
-    /// Install PTP CNI plugin optimized for Apple Container VMs
+    /// Install PTP CNI plugin optimized for Apple Container VMs.
+    ///
+    /// Single-node default uses the full `10.244.0.0/16`. Multi-node clusters
+    /// re-run [`install_ptp_cni_with_subnet`] per node with that node's assigned
+    /// pod CIDR (see [`configure_ptp_cross_node_routing`]).
     async fn install_ptp_cni(&self, container_name: &str) -> Result<()> {
-        info!("Installing PTP CNI plugin optimized for Apple Container VMs");
+        self.install_ptp_cni_with_subnet(container_name, "10.244.0.0/16")
+            .await
+    }
 
-        // PTP CNI configuration that works with kata-containers kernel limitations
-        let ptp_config = r#"{
+    /// Install the PTP CNI config on a node using a specific pod `subnet`.
+    ///
+    /// Stale host-local IPAM allocations are cleared first so the node starts
+    /// fresh when the subnet changes (e.g. moving from the default `/16` to a
+    /// per-node `/24`), then kubelet is restarted to pick up the new config.
+    async fn install_ptp_cni_with_subnet(&self, container_name: &str, subnet: &str) -> Result<()> {
+        info!(
+            "Installing PTP CNI plugin on '{}' with subnet {}",
+            container_name, subnet
+        );
+
+        // PTP CNI configuration that works with kata-containers kernel limitations.
+        let ptp_config = format!(
+            r#"{{
   "cniVersion": "0.4.0",
   "name": "ptp-net",
   "plugins": [
-    {
+    {{
       "type": "ptp",
       "ipMasq": true,
-      "ipam": {
+      "ipam": {{
         "type": "host-local",
-        "subnet": "10.244.0.0/16",
+        "subnet": "{}",
         "routes": [
-          { "dst": "0.0.0.0/0" }
+          {{ "dst": "0.0.0.0/0" }}
         ]
-      }
-    },
-    {
+      }}
+    }},
+    {{
       "type": "portmap",
-      "capabilities": {
+      "capabilities": {{
         "portMappings": true
-      }
-    }
+      }}
+    }}
   ]
-}"#;
+}}"#,
+            subnet
+        );
 
-        // Create CNI configuration directory and install config
+        // Clear stale IPAM allocations so host-local starts fresh with the new subnet,
+        // then write the CNI config.
         let install_cmd = format!(
-            r#"mkdir -p /etc/cni/net.d && cat > /etc/cni/net.d/10-ptp.conflist << 'EOF'
+            r#"mkdir -p /etc/cni/net.d && rm -rf /var/lib/cni/networks/ptp-net && cat > /etc/cni/net.d/10-ptp.conflist << 'EOF'
 {}
 EOF"#,
             ptp_config
@@ -2570,7 +2613,94 @@ EOF"#,
             warn!("Kubelet restart returned non-zero: {}", stderr);
         }
 
-        info!("PTP CNI plugin installed successfully - compatible with Apple Container VMs");
+        info!(
+            "PTP CNI plugin installed on '{}' with subnet {}",
+            container_name, subnet
+        );
+        Ok(())
+    }
+
+    /// Configure per-node PTP subnets and cross-node routes for a multi-node PTP cluster.
+    ///
+    /// PTP CNI is point-to-point: it only wires pods to their local node. Without this,
+    /// every node allocates from the same `10.244.0.0/16` (IP conflicts) and pods on
+    /// workers cannot reach CoreDNS on the control-plane (DNS failures). This:
+    ///   1. Reads each node's assigned `podCIDR` from the Kubernetes API.
+    ///   2. Rewrites each node's PTP config to use that node-specific `/24`.
+    ///   3. Adds `ip route` entries so traffic to another node's pod subnet is
+    ///      forwarded to that node's VM IP.
+    async fn configure_ptp_cross_node_routing(
+        &self,
+        cp_name: &str,
+        nodes: &[(String, String)],
+    ) -> Result<()> {
+        info!(
+            "Configuring PTP cross-node routing for {} nodes",
+            nodes.len()
+        );
+
+        // Query pod CIDRs assigned by kube-controller-manager.
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args([
+            "exec",
+            cp_name,
+            "kubectl",
+            "--kubeconfig=/etc/kubernetes/admin.conf",
+            "get",
+            "nodes",
+            "-o",
+            "json",
+        ]);
+        let output = cmd.output().context("Failed to query node pod CIDRs")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("kubectl get nodes failed: {}", stderr));
+        }
+
+        let nodes_json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("Failed to parse node JSON")?;
+        let node_cidrs = Self::parse_node_cidrs(&nodes_json);
+
+        if node_cidrs.is_empty() {
+            warn!("No pod CIDRs found on nodes — cross-node routing skipped");
+            return Ok(());
+        }
+        info!("Node pod CIDRs: {:?}", node_cidrs);
+
+        for plan in Self::plan_ptp_cross_node(nodes, &node_cidrs) {
+            // Rewrite PTP config with the node-specific subnet (clears stale IPAM state).
+            self.install_ptp_cni_with_subnet(&plan.node, &plan.subnet)
+                .await?;
+
+            // Add a host route for every other node's pod CIDR via that node's VM IP.
+            for route in &plan.routes {
+                let route_cmd = format!("ip route replace {} via {}", route.cidr, route.via_ip);
+                let mut cmd = std::process::Command::new(&self.cli_path);
+                cmd.args(["exec", &plan.node, "sh", "-c", &route_cmd]);
+                match cmd.output() {
+                    Ok(out) if out.status.success() => {
+                        info!(
+                            "Route added: {} via {} on '{}'",
+                            route.cidr, route.via_ip, plan.node
+                        );
+                    }
+                    Ok(out) => {
+                        warn!(
+                            "Route {} via {} on '{}': {}",
+                            route.cidr,
+                            route.via_ip,
+                            plan.node,
+                            String::from_utf8_lossy(&out.stderr)
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to add cross-node route on '{}': {}", plan.node, e);
+                    }
+                }
+            }
+        }
+
+        info!("PTP cross-node routing configured");
         Ok(())
     }
 
@@ -2791,6 +2921,84 @@ EOF"#,
     }
 }
 
+/// A single host route to another node's pod subnet, via that node's VM IP.
+#[derive(Debug, Clone, PartialEq)]
+struct PtpRoute {
+    cidr: String,
+    via_ip: String,
+}
+
+/// The PTP networking plan for one node: the pod subnet it should use for its
+/// local PTP IPAM, plus host routes to every other node's pod subnet.
+#[derive(Debug, Clone, PartialEq)]
+struct PtpNodePlan {
+    node: String,
+    subnet: String,
+    routes: Vec<PtpRoute>,
+}
+
+impl AppleContainerClient {
+    /// Parse `kubectl get nodes -o json` into a `node-name -> podCIDR` map.
+    ///
+    /// Nodes whose `spec.podCIDR` is absent (not yet assigned by
+    /// kube-controller-manager) are skipped.
+    fn parse_node_cidrs(nodes_json: &serde_json::Value) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        if let Some(items) = nodes_json["items"].as_array() {
+            for node in items {
+                let name = node["metadata"]["name"].as_str().unwrap_or("");
+                if name.is_empty() {
+                    continue;
+                }
+                if let Some(cidr) = node["spec"]["podCIDR"].as_str() {
+                    map.insert(name.to_string(), cidr.to_string());
+                }
+            }
+        }
+        map
+    }
+
+    /// Compute the per-node PTP routing plan for a multi-node cluster.
+    ///
+    /// PTP CNI is point-to-point and only wires pods to their local node, so
+    /// without this every node would (a) allocate from the same shared
+    /// `10.244.0.0/16` (IP conflicts) and (b) have no route to pods on other
+    /// nodes (breaking CoreDNS for any pod off the control-plane). The plan
+    /// gives each node its own assigned pod CIDR as the PTP subnet and a route
+    /// to every other node's pod CIDR via that node's VM IP.
+    ///
+    /// Nodes whose pod CIDR is not yet known are omitted, and routes are only
+    /// emitted toward peers whose CIDR is known.
+    fn plan_ptp_cross_node(
+        nodes: &[(String, String)],
+        node_cidrs: &HashMap<String, String>,
+    ) -> Vec<PtpNodePlan> {
+        let mut plans = Vec::new();
+        for (node, _vm_ip) in nodes {
+            let subnet = match node_cidrs.get(node) {
+                Some(cidr) => cidr.clone(),
+                None => continue,
+            };
+            let routes = nodes
+                .iter()
+                .filter(|(other, _)| other != node)
+                .filter_map(|(other, other_ip)| {
+                    node_cidrs.get(other).map(|cidr| PtpRoute {
+                        cidr: cidr.clone(),
+                        via_ip: other_ip.clone(),
+                    })
+                })
+                .collect();
+            plans.push(PtpNodePlan {
+                node: node.clone(),
+                subnet,
+                routes,
+            });
+        }
+        plans
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2841,5 +3049,93 @@ kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
         let output = "Some other output without join info";
         let result = AppleContainerClient::parse_kubeadm_join_info(output, "10.0.0.1");
         assert!(result.is_err());
+    }
+
+    // --- Multi-node PTP cross-node routing ---
+
+    #[test]
+    fn test_parse_node_cidrs_normal() {
+        let json = serde_json::json!({
+            "items": [
+                {"metadata": {"name": "node-cp"}, "spec": {"podCIDR": "10.244.0.0/24"}},
+                {"metadata": {"name": "node-worker"}, "spec": {"podCIDR": "10.244.1.0/24"}}
+            ]
+        });
+        let cidrs = AppleContainerClient::parse_node_cidrs(&json);
+        assert_eq!(cidrs.len(), 2);
+        assert_eq!(cidrs["node-cp"], "10.244.0.0/24");
+        assert_eq!(cidrs["node-worker"], "10.244.1.0/24");
+    }
+
+    #[test]
+    fn test_parse_node_cidrs_missing_pod_cidr_skipped() {
+        let json = serde_json::json!({
+            "items": [
+                {"metadata": {"name": "node-cp"}, "spec": {"podCIDR": "10.244.0.0/24"}},
+                {"metadata": {"name": "node-worker"}, "spec": {}}
+            ]
+        });
+        let cidrs = AppleContainerClient::parse_node_cidrs(&json);
+        assert_eq!(cidrs.len(), 1);
+        assert!(cidrs.contains_key("node-cp"));
+        assert!(!cidrs.contains_key("node-worker"));
+    }
+
+    #[test]
+    fn test_parse_node_cidrs_empty_items() {
+        let json = serde_json::json!({"items": []});
+        let cidrs = AppleContainerClient::parse_node_cidrs(&json);
+        assert!(cidrs.is_empty());
+    }
+
+    #[test]
+    fn plan_gives_each_node_its_own_cidr_and_routes_to_every_peer() {
+        let nodes = vec![
+            ("cp".to_string(), "192.168.64.2".to_string()),
+            ("w1".to_string(), "192.168.64.3".to_string()),
+            ("w2".to_string(), "192.168.64.4".to_string()),
+        ];
+        let cidrs = HashMap::from([
+            ("cp".to_string(), "10.244.0.0/24".to_string()),
+            ("w1".to_string(), "10.244.1.0/24".to_string()),
+            ("w2".to_string(), "10.244.2.0/24".to_string()),
+        ]);
+
+        let plans = AppleContainerClient::plan_ptp_cross_node(&nodes, &cidrs);
+        let w1 = plans.iter().find(|p| p.node == "w1").unwrap();
+
+        // Each node must use its OWN /24 as the PTP subnet (not the shared 10.244.0.0/16).
+        assert_eq!(w1.subnet, "10.244.1.0/24");
+
+        // Each node must get a route to every OTHER node's pod CIDR via that node's VM IP.
+        assert_eq!(w1.routes.len(), 2);
+        assert!(w1
+            .routes
+            .iter()
+            .any(|r| r.cidr == "10.244.0.0/24" && r.via_ip == "192.168.64.2"));
+        assert!(w1
+            .routes
+            .iter()
+            .any(|r| r.cidr == "10.244.2.0/24" && r.via_ip == "192.168.64.4"));
+        // No self-route.
+        assert!(!w1.routes.iter().any(|r| r.cidr == "10.244.1.0/24"));
+    }
+
+    #[test]
+    fn plan_skips_nodes_without_a_known_cidr() {
+        let nodes = vec![
+            ("cp".to_string(), "192.168.64.2".to_string()),
+            ("w1".to_string(), "192.168.64.3".to_string()),
+        ];
+        // w1 has no assigned podCIDR yet — it cannot be planned.
+        let cidrs = HashMap::from([("cp".to_string(), "10.244.0.0/24".to_string())]);
+
+        let plans = AppleContainerClient::plan_ptp_cross_node(&nodes, &cidrs);
+
+        // Only cp is plannable; cp has no peer with a known CIDR, so it gets no routes.
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].node, "cp");
+        assert_eq!(plans[0].subnet, "10.244.0.0/24");
+        assert!(plans[0].routes.is_empty());
     }
 }
