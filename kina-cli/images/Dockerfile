@@ -2,12 +2,15 @@
 # Custom Debian-based image for Apple Container VMs with full kernel support
 # Replaces kindest/node with proper VM-compatible image for Cilium CNI
 
-FROM debian:13-slim
+FROM debian:13-slim@sha256:4e401d95de7083948053197a9c3913343cd06b706bf15eb6a0c3ccd26f436a0e
 
 ARG CNI_PLUGINS_VERSION=1.9.1
+ARG CNI_PLUGINS_SHA256SUM=56171987d3947707c3563db2f4001bccaf50fd63468611b9f3cbecb1375ee7ec
 ARG CONTAINERD_VERSION=2.3.1
+ARG CONTAINERD_SHA256SUM=46a83603a850f3916ca7c942310daaf82ed17773a85b1d431e92d4a541e46d0d
 ARG KUBERNETES_VERSION=1.36.1
 ARG RUNC_VERSION=1.4.2
+ARG RUNC_SHA256SUM=ea54032310588e115633aa2f4bba8bf9500257f657e1deca88df5778775138db
 
 # Metadata
 LABEL description="Kina Kubernetes Node Image for Apple Container VMs"
@@ -66,18 +69,23 @@ RUN systemctl set-default multi-user.target \
     && systemctl disable systemd-timesyncd
 
 # Install containerd
-RUN curl -fsSL https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz \
-    | tar -xzC /usr/local
+RUN curl -fsSL -o /tmp/containerd.tar.gz https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-arm64.tar.gz \
+    && echo "${CONTAINERD_SHA256SUM}  /tmp/containerd.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/containerd.tar.gz -C /usr/local \
+    && rm /tmp/containerd.tar.gz
 
 # Install runc
 RUN curl -fsSL https://github.com/opencontainers/runc/releases/download/v${RUNC_VERSION}/runc.arm64 \
     -o /usr/local/sbin/runc \
+    && echo "${RUNC_SHA256SUM}  /usr/local/sbin/runc" | sha256sum -c - \
     && chmod +x /usr/local/sbin/runc
 
 # Install CNI plugins
 RUN mkdir -p /opt/cni/bin \
-    && curl -fsSL https://github.com/containernetworking/plugins/releases/download/v${CNI_PLUGINS_VERSION}/cni-plugins-linux-arm64-v${CNI_PLUGINS_VERSION}.tgz \
-    | tar -xzC /opt/cni/bin
+    && curl -fsSL -o /tmp/cni-plugins.tgz https://github.com/containernetworking/plugins/releases/download/v${CNI_PLUGINS_VERSION}/cni-plugins-linux-arm64-v${CNI_PLUGINS_VERSION}.tgz \
+    && echo "${CNI_PLUGINS_SHA256SUM}  /tmp/cni-plugins.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/cni-plugins.tgz -C /opt/cni/bin \
+    && rm /tmp/cni-plugins.tgz
 
 # Configure containerd
 RUN mkdir -p /etc/containerd \
