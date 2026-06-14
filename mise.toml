@@ -250,8 +250,6 @@ run = "mise install kubectx kubens"
 description = "Set up development environment"
 run = [
     "rustup component add rustfmt clippy",
-    "cargo install cargo-audit",
-    "cargo install cargo-tarpaulin",
     "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
 ]
 
