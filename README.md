@@ -26,6 +26,7 @@
 - ☸️ **Kubernetes API Compatibility** - Full Kubernetes cluster functionality with kubectl integration
 - 🌐 **CNI Plugin Support** - Choose between PTP (default) and Cilium for container networking
 - 🔧 **Nginx Ingress Controller** - Built-in support for nginx-ingress installation and configuration
+- 📊 **Metrics Server** - One-command install for `kubectl top` and Horizontal Pod Autoscaling
 - ⚙️ **Flexible Configuration** - TOML-based configuration with sensible defaults
 - 📋 **Comprehensive CLI** - Rich command set for cluster management and operations
 - 🚀 **Development Ready** - Integrated development workflow with mise task automation
@@ -167,6 +168,9 @@ kina install nginx-ingress --cluster my-cluster
 
 # Install demo application
 kina install demo-app --cluster my-cluster
+
+# Install metrics-server (enables `kubectl top` and HPA)
+kina install metrics-server --cluster my-cluster
 
 # Verify the cluster end-to-end
 kina verify my-cluster
