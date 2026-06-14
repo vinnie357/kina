@@ -14,8 +14,8 @@
 ///       probe_passed, aggregate_verify, ProbeResult,
 ///   };
 use kina_cli::core::verify::{
-    aggregate_verify, parse_dns_domain, probe_host, probe_passed, probe_url, render_demo_manifest,
-    ProbeResult,
+    aggregate_verify, cni_report_from_cilium_pods, parse_dns_domain, parse_node_versions,
+    probe_host, probe_passed, probe_url, render_demo_manifest, CniReport, ProbeResult,
 };
 
 // ===========================================================================
@@ -513,4 +513,35 @@ fn source_verify_uses_aggregate() {
          the verify command's PASS/FAIL/exit-code decision must route \
          through the pure aggregation fn (AC3 non-zero exit on any FAIL)"
     );
+}
+
+// ===========================================================================
+// Group H — CNI runtime detection (cni_report_from_cilium_pods)
+// ===========================================================================
+
+#[test]
+fn cni_report_empty_means_ptp() {
+    assert_eq!(cni_report_from_cilium_pods("   \n"), CniReport::Ptp);
+}
+
+#[test]
+fn cni_report_counts_ready_cilium() {
+    let out = "cilium-abc 1/1 Running 0 1m\ncilium-def 0/1 Pending 0 1m\n";
+    assert_eq!(
+        cni_report_from_cilium_pods(out),
+        CniReport::Cilium { ready: 1, total: 2 }
+    );
+}
+
+// ===========================================================================
+// Group I — node version parsing (parse_node_versions)
+// ===========================================================================
+
+#[test]
+fn parse_node_versions_skips_header() {
+    let out = "NAME                 VERSION\ncp-node              v1.36.1\nwk-node              v1.36.1\n";
+    let m = parse_node_versions(out);
+    assert_eq!(m.get("cp-node").map(String::as_str), Some("v1.36.1"));
+    assert_eq!(m.get("wk-node").map(String::as_str), Some("v1.36.1"));
+    assert_eq!(m.len(), 2);
 }

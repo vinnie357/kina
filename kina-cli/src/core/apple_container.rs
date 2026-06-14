@@ -432,6 +432,23 @@ pub fn validate_version(version: &str) -> Result<()> {
     Ok(())
 }
 
+/// Format Apple Container's `creationDate` (ISO-8601, e.g. "2026-06-14T21:52:43Z")
+/// into a friendly "YYYY-MM-DD HH:MM UTC" string. Returns the raw input on parse
+/// failure and "unknown" when empty. (Apple Container 1.0.0 emits ISO strings,
+/// not Mac-absolute-time floats.)
+fn format_created(iso: &str) -> String {
+    if iso.is_empty() {
+        return "unknown".to_string();
+    }
+    match chrono::DateTime::parse_from_rfc3339(iso) {
+        Ok(dt) => dt
+            .with_timezone(&chrono::Utc)
+            .format("%Y-%m-%d %H:%M UTC")
+            .to_string(),
+        Err(_) => iso.to_string(),
+    }
+}
+
 /// A container entry parsed from `container list --format json` (1.0.0 shape).
 #[derive(Debug)]
 pub struct ParsedContainer {
@@ -445,6 +462,8 @@ pub struct ParsedContainer {
     /// suffix stripped (e.g., `"192.168.65.2"` not `"192.168.65.2/24"`).
     /// `None` when the container has no network attachment.
     pub ipv4: Option<String>,
+    /// `configuration.creationDate` (ISO-8601 string), if present.
+    pub created: Option<String>,
 }
 
 /// Parse the JSON output of `container list --format json` using the 1.0.0 shape.
@@ -503,11 +522,19 @@ pub fn parse_container_list(json: &str) -> Result<Vec<ParsedContainer>> {
             .and_then(|v| v.as_str())
             .map(|cidr| cidr.split('/').next().unwrap_or(cidr).to_string());
 
+        // configuration.creationDate (ISO-8601 string)
+        let created = elem
+            .get("configuration")
+            .and_then(|c| c.get("creationDate"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         result.push(ParsedContainer {
             id,
             labels,
             state,
             ipv4,
+            created,
         });
     }
 
@@ -1652,7 +1679,11 @@ impl AppleContainerClient {
                                 ClusterStatus::Stopped
                             },
                             nodes: Vec::new(),
-                            created: "unknown".to_string(),
+                            created: container
+                                .created
+                                .as_deref()
+                                .map(format_created)
+                                .unwrap_or_else(|| "unknown".to_string()),
                             kubeconfig_path: None,
                         });
 
@@ -3137,5 +3168,23 @@ kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
         assert_eq!(plans[0].node, "cp");
         assert_eq!(plans[0].subnet, "10.244.0.0/24");
         assert!(plans[0].routes.is_empty());
+    }
+
+    #[test]
+    fn format_created_reformats_iso8601() {
+        assert_eq!(format_created("2026-06-14T21:52:43Z"), "2026-06-14 21:52 UTC");
+    }
+
+    #[test]
+    fn format_created_falls_back_on_unparseable() {
+        assert_eq!(format_created("not-a-date"), "not-a-date");
+        assert_eq!(format_created(""), "unknown");
+    }
+
+    #[test]
+    fn parse_container_list_extracts_creation_date() {
+        let json = r#"[{"id":"n1","configuration":{"creationDate":"2026-06-14T21:52:43Z","labels":{"io.kina.cluster":"c"}},"status":{"state":"running"}}]"#;
+        let parsed = parse_container_list(json).unwrap();
+        assert_eq!(parsed[0].created.as_deref(), Some("2026-06-14T21:52:43Z"));
     }
 }

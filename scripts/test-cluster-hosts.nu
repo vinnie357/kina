@@ -77,13 +77,16 @@ let target_nodes = if ($worker_nodes | is-not-empty) {
 # Get DNS domain
 let dns_raw = (do { ^container system dns list } | complete)
 let dns_domain = if $dns_raw.exit_code == 0 {
-    $dns_raw.stdout | lines | where { |l| not ($l | is-empty) } | first | default "" | str trim
+    ($dns_raw.stdout | lines | each { |l| $l | str trim } | where { |l| ($l | is-not-empty) and ($l =~ '[a-z]') } | first | default "")
 } else {
     ""
 }
 
-if ($dns_domain | is-empty) {
-    err "Could not detect DNS domain from Apple Container"
+let dns_domain = if ($dns_domain | is-empty) {
+    warn "No DNS domain configured, using fallback: demo.local"
+    "demo.local"
+} else {
+    $dns_domain
 }
 
 let hostname = $"($latest_demo)-control-plane.($dns_domain)"

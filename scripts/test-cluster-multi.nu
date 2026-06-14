@@ -15,8 +15,8 @@ let cluster_name = $"demo-multi-($timestamp)"
 let worker_count = 2
 
 # CNI and kernel-path from env (AC5: KINA_TEST_CNI / KINA_TEST_KERNEL_PATH)
-let test_cni = ($env | get -i KINA_TEST_CNI | default "ptp")
-let test_kernel_path = ($env | get -i KINA_TEST_KERNEL_PATH | default "")
+let test_cni = ($env | get -o KINA_TEST_CNI | default "ptp")
+let test_kernel_path = ($env | get -o KINA_TEST_KERNEL_PATH | default "")
 
 banner "KINA MULTI-NODE INTEGRATION TEST"
 print $"(ansi cyan)Cluster Name:(ansi reset) ($cluster_name)"
@@ -127,8 +127,12 @@ log "Step 8: Deploying demo application..."
 # Get DNS domain
 let dns_raw = (do { ^container system dns list } | complete)
 let dns_domain = if $dns_raw.exit_code == 0 {
-    let first_line = ($dns_raw.stdout | lines | where { |l| not ($l | is-empty) } | first | default "")
-    $first_line | str trim
+    ($dns_raw.stdout
+        | lines
+        | each { |l| $l | str trim }
+        | where { |l| ($l | is-not-empty) and ($l =~ '[a-z]') }
+        | first
+        | default "")
 } else {
     ""
 }
