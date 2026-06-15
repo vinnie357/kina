@@ -469,7 +469,7 @@ kina create my-cluster --image kina/node:v1.36.1
 
 ### Task Tracking
 
-kina uses **bees** for task tracking, a lightweight SQLite-backed local issue tracker. Issues are stored in the `.bees/` directory (JSONL synced via git, SQLite db local-only).
+kina uses [bees](https://github.com/ctxshift/bees) for task tracking, a lightweight SQLite-backed local issue tracker. Issues are stored in the `.bees/` directory (JSONL synced via git, SQLite db local-only).
 
 ```bash
 bees ready                       # Find tasks ready to work on (no blockers)

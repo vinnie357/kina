@@ -12,7 +12,7 @@ Thank you for your interest in contributing to kina!
    mise install
    mise run setup
    ```
-3. Find an open task: `bees ready`
+3. Find an open task: `bees ready` (this project uses [bees](https://github.com/ctxshift/bees) for issue tracking)
 4. Create a branch: `git checkout -b type/description`
 
 ## Development Workflow
