@@ -87,10 +87,10 @@ dir = "kina-cli"
 [tasks."test:cli"]
 description = "Run basic CLI functionality tests"
 run = [
-    "cargo run --release -- --version",
-    "cargo run --release -- --help",
-    "cargo run --release -- create --help",
-    "cargo run --release -- config show --help",
+  "cargo run --release -- --version",
+  "cargo run --release -- --help",
+  "cargo run --release -- create --help",
+  "cargo run --release -- config show --help",
 ]
 dir = "kina-cli"
 
@@ -254,25 +254,18 @@ run = "mise install kubectx kubens"
 [tasks.setup]
 description = "Set up development environment"
 run = [
-    "rustup component add rustfmt clippy",
-    "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
+  "rustup component add rustfmt clippy",
+  "mkdir -p ${KINA_CONFIG_DIR} ${KINA_DATA_DIR}",
 ]
 
 [tasks."setup:dev"]
 description = "Complete development environment setup"
 depends = ["setup", "k8s:install"]
-run = [
-    "mise run container:check",
-    "mise run k8s:check",
-]
+run = ["mise run container:check", "mise run k8s:check"]
 
 [tasks.release]
 description = "Build release binary"
-run = [
-    "mise run ci",
-    "cargo build --release",
-    "strip target/release/kina",
-]
+run = ["mise run ci", "cargo build --release", "strip target/release/kina"]
 
 # ============================================================================
 # SECURITY

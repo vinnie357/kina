@@ -1274,21 +1274,73 @@ impl StatusArgs {
 
         // Print nodes information
         if !cluster_info.nodes.is_empty() {
+            // Fetch real kubelet versions (best-effort; fall back to node.version).
+            // Resolve the kubeconfig from the cluster name (cluster_info.kubeconfig_path
+            // is often None in the list path); mirrors how readiness checks resolve it.
+            let versions = match kubeconfig_for(&cluster_info.name) {
+                Ok(kubeconfig) => std::process::Command::new("kubectl")
+                    .args([
+                        "--kubeconfig",
+                        &kubeconfig,
+                        "get",
+                        "nodes",
+                        "-o",
+                        "custom-columns=NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion",
+                    ])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| {
+                        crate::core::verify::parse_node_versions(&String::from_utf8_lossy(&o.stdout))
+                    })
+                    .unwrap_or_default(),
+                Err(_) => std::collections::HashMap::new(),
+            };
+
+            // Resolve display rows (name, status, role, version, ip).
+            let rows: Vec<(String, String, String, String, String)> = cluster_info
+                .nodes
+                .iter()
+                .map(|n| {
+                    let version = versions
+                        .get(&n.name)
+                        .cloned()
+                        .unwrap_or_else(|| n.version.clone());
+                    (
+                        n.name.clone(),
+                        n.status.clone(),
+                        n.role.to_string(),
+                        version,
+                        n.ip_address.as_deref().unwrap_or("N/A").to_string(),
+                    )
+                })
+                .collect();
+
+            let w = |header: &str, idx: usize| -> usize {
+                rows.iter()
+                    .map(|r| [&r.0, &r.1, &r.2, &r.3, &r.4][idx].len())
+                    .max()
+                    .unwrap_or(0)
+                    .max(header.len())
+            };
+            let (wn, ws, wr, wv, wi) = (
+                w("NAME", 0),
+                w("STATUS", 1),
+                w("ROLES", 2),
+                w("VERSION", 3),
+                w("IP", 4),
+            );
+
             println!("\nNodes:");
             println!(
-                "{:<25} {:<15} {:<10} {:<15} {:<15}",
+                "{:<wn$} {:<ws$} {:<wr$} {:<wv$} {:<wi$}",
                 "NAME", "STATUS", "ROLES", "VERSION", "IP"
             );
-            println!("{}", "-".repeat(75));
-
-            for node in &cluster_info.nodes {
+            println!("{}", "-".repeat(wn + ws + wr + wv + wi + 4));
+            for r in &rows {
                 println!(
-                    "{:<25} {:<15} {:<10} {:<15} {:<15}",
-                    node.name,
-                    node.status,
-                    node.role,
-                    node.version,
-                    node.ip_address.as_deref().unwrap_or("N/A")
+                    "{:<wn$} {:<ws$} {:<wr$} {:<wv$} {:<wi$}",
+                    r.0, r.1, r.2, r.3, r.4
                 );
             }
         }
@@ -1573,8 +1625,9 @@ impl StatusArgs {
     }
 
     async fn check_cni_ready(&self, kubeconfig_str: &str) -> Result<bool> {
-        // Check for Cilium pods
-        if let Ok(output) = std::process::Command::new("kubectl")
+        use crate::core::verify::{cni_report_from_cilium_pods, CniReport};
+
+        let output = std::process::Command::new("kubectl")
             .args([
                 "--kubeconfig",
                 kubeconfig_str,
@@ -1586,43 +1639,34 @@ impl StatusArgs {
                 "k8s-app=cilium",
                 "--no-headers",
             ])
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let lines: Vec<&str> = stdout.lines().collect();
+            .output();
 
-                if lines.is_empty() {
-                    println!("🌐 CNI (Cilium): Not found ❌");
-                    return Ok(false);
-                }
-
-                let mut ready_cilium = 0;
-                let total_cilium = lines.len();
-
-                for line in lines {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 3 {
-                        let ready_status = parts[1];
-                        if ready_status.starts_with("1/1") {
-                            ready_cilium += 1;
-                        }
+        match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                match cni_report_from_cilium_pods(&stdout) {
+                    CniReport::Ptp => {
+                        // PTP has no controller pods; node-readiness proves the path.
+                        println!("🌐 CNI (ptp): Active ✅");
+                        Ok(true)
+                    }
+                    CniReport::Cilium { ready, total } => {
+                        let ok = total > 0 && ready == total;
+                        println!(
+                            "🌐 CNI (Cilium): {}/{} Ready {}",
+                            ready,
+                            total,
+                            if ok { "✅" } else { "❌" }
+                        );
+                        Ok(ok)
                     }
                 }
-
-                let cilium_ready = ready_cilium == total_cilium;
-                println!(
-                    "🌐 CNI (Cilium): {}/{} Ready {}",
-                    ready_cilium,
-                    total_cilium,
-                    if cilium_ready { "✅" } else { "❌" }
-                );
-                return Ok(cilium_ready);
+            }
+            _ => {
+                println!("🌐 CNI: Unknown ❌");
+                Ok(false)
             }
         }
-
-        println!("🌐 CNI (Cilium): Unknown ❌");
-        Ok(false)
     }
 
     async fn check_ingress_ready(&self, kubeconfig_str: &str) -> Result<bool> {

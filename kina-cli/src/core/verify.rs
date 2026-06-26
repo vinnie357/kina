@@ -92,3 +92,48 @@ pub fn http_layer_pass(node_ips: &[String], results: &[ProbeResult]) -> bool {
     }
     aggregate_verify(results)
 }
+
+/// Result of inspecting a cluster's CNI via its Cilium pods.
+#[derive(Debug, PartialEq)]
+pub enum CniReport {
+    /// No Cilium pods — cluster uses PTP, which has no controller pods to poll.
+    Ptp,
+    /// Cilium is present; `ready`/`total` pod counts.
+    Cilium { ready: usize, total: usize },
+}
+
+/// Decide CNI status from `kubectl get pods -l k8s-app=cilium --no-headers`
+/// stdout. Empty output => PTP. Otherwise count pods whose READY column is `1/1`.
+pub fn cni_report_from_cilium_pods(stdout: &str) -> CniReport {
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return CniReport::Ptp;
+    }
+    let total = lines.len();
+    let ready = lines
+        .iter()
+        .filter(|l| {
+            l.split_whitespace()
+                .nth(1)
+                .is_some_and(|s| s.starts_with("1/1"))
+        })
+        .count();
+    CniReport::Cilium { ready, total }
+}
+
+/// Parse `kubectl get nodes -o custom-columns=NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion`
+/// output into a name→version map, skipping the `NAME ...` header line.
+pub fn parse_node_versions(stdout: &str) -> std::collections::HashMap<String, String> {
+    stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with("NAME"))
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            match (it.next(), it.next()) {
+                (Some(name), Some(ver)) => Some((name.to_string(), ver.to_string())),
+                _ => None,
+            }
+        })
+        .collect()
+}
