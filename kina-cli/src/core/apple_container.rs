@@ -3043,8 +3043,16 @@ async fn check_tcp_reachable(addr: &str, port: u16, attempts: u32) -> bool {
         if i > 0 {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
-        if tokio::net::TcpStream::connect(&socket_addr).await.is_ok() {
-            return true;
+        let connect_result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            tokio::net::TcpStream::connect(&socket_addr),
+        )
+        .await;
+        match connect_result {
+            Ok(Ok(_)) => return true,
+            Ok(Err(_)) | Err(_) => {
+                // connect error or per-attempt timeout — try next attempt
+            }
         }
     }
     false
