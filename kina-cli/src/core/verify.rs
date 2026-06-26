@@ -340,3 +340,87 @@ pub fn demo_route_type(c: ActiveController) -> DemoRouteType {
         ActiveController::NginxIngress | ActiveController::None => DemoRouteType::NginxIngress,
     }
 }
+
+// ===========================================================================
+// kina-39 — host kubeconfig reachability (pure seams)
+// ===========================================================================
+
+/// Rewrite the `server:` line(s) in a kubeconfig YAML to point at `vm_ip:6443`.
+///
+/// Walks lines and replaces any line whose trimmed content starts with
+/// `server: https://` with the same leading whitespace followed by
+/// `server: https://<vm_ip>:6443`.  Port is fixed at 6443.
+/// All other lines are left verbatim.  Idempotent: if the server already
+/// points at `https://<vm_ip>:6443`, the output equals the input exactly.
+///
+/// This supersedes the ad-hoc `replace("https://127.0.0.1:6443", ...)` block
+/// that was inlined in `apple_container::setup_kubeconfig` and handles any
+/// existing server host (localhost, 127.0.0.1, old VM IP, internal cluster IP).
+pub fn rewrite_kubeconfig_server(kubeconfig_yaml: &str, vm_ip: &str) -> String {
+    let ends_with_newline = kubeconfig_yaml.ends_with('\n');
+    let mut result = kubeconfig_yaml
+        .lines()
+        .map(|line| {
+            if line.trim().starts_with("server: https://") {
+                // Preserve the leading whitespace so YAML indentation is unchanged.
+                let leading_len = line.len() - line.trim_start().len();
+                let leading = &line[..leading_len];
+                format!("{}server: https://{}:6443", leading, vm_ip)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // str::lines() strips a trailing newline; restore it when the original had one.
+    if ends_with_newline {
+        result.push('\n');
+    }
+    result
+}
+
+/// Build a human-readable multi-line diagnostic when the control-plane API
+/// server at `vm_ip:port` is unreachable from the host.
+///
+/// Always names the cluster, vm_ip, and port in the output.  When `bridge`
+/// and/or `gateway` are `Some`, the network context is included to help
+/// the operator identify the routing path.  Never panics when either is `None`.
+/// Always names the repair command `kina kubeconfig <cluster>` using the
+/// actual cluster name passed in.
+pub fn build_unreachable_diagnostic(
+    cluster: &str,
+    vm_ip: &str,
+    port: u16,
+    bridge: Option<&str>,
+    gateway: Option<&str>,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!(
+        "WARNING: API server unreachable at {}:{} for cluster '{}'",
+        vm_ip, port, cluster
+    ));
+    lines.push(String::new());
+    match (bridge, gateway) {
+        (Some(br), Some(gw)) => {
+            lines.push(format!("  Network bridge : {}", br));
+            lines.push(format!("  Gateway        : {}", gw));
+        }
+        (Some(br), None) => {
+            lines.push(format!("  Network bridge : {}", br));
+            lines.push("  Gateway        : (unknown)".to_string());
+        }
+        (None, Some(gw)) => {
+            lines.push("  Network bridge : (unknown)".to_string());
+            lines.push(format!("  Gateway        : {}", gw));
+        }
+        (None, None) => {
+            lines.push(
+                "  Network: bridge and gateway information could not be determined.".to_string(),
+            );
+        }
+    }
+    lines.push(String::new());
+    lines.push("The cluster is usable in-container. To repair host access, run:".to_string());
+    lines.push(format!("  kina kubeconfig {}", cluster));
+    lines.join("\n")
+}

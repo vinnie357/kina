@@ -1764,34 +1764,15 @@ impl AppleContainerClient {
                 .context("Failed to get kubeconfig from cluster")?;
 
             if output.status.success() {
-                let mut kubeconfig = String::from_utf8_lossy(&output.stdout).to_string();
+                let kubeconfig_raw = String::from_utf8_lossy(&output.stdout).to_string();
 
-                // Get the VM's IP address to update the server URL
-                if let Some(vm_ip) = &control_plane_node.ip_address {
+                // Rewrite server URL to the live VM IP (pure fn, idempotent, handles any host).
+                let kubeconfig = if let Some(vm_ip) = &control_plane_node.ip_address {
                     info!("Updating kubeconfig server URL to use VM IP: {}", vm_ip);
-
-                    // Replace localhost/127.0.0.1 references with the VM's IP
-                    kubeconfig = kubeconfig
-                        .replace("https://127.0.0.1:6443", &format!("https://{}:6443", vm_ip))
-                        .replace("https://localhost:6443", &format!("https://{}:6443", vm_ip));
-
-                    // Also replace any internal cluster IP with VM IP
-                    if kubeconfig.contains("https://10.") || kubeconfig.contains("https://172.") {
-                        // Use regex or string manipulation to replace internal IPs
-                        // For now, use a simple approach
-                        kubeconfig = kubeconfig
-                            .lines()
-                            .map(|line| {
-                                if line.trim().starts_with("server: https://") {
-                                    format!("    server: https://{}:6443", vm_ip)
-                                } else {
-                                    line.to_string()
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                    }
-                }
+                    crate::core::verify::rewrite_kubeconfig_server(&kubeconfig_raw, vm_ip)
+                } else {
+                    kubeconfig_raw
+                };
 
                 // Make user names cluster-specific to prevent conflicts in merged config
                 let kubeconfig = self.make_user_names_cluster_specific(&kubeconfig, name)?;
@@ -2933,24 +2914,9 @@ EOF"#,
 
         let mut kubeconfig = String::from_utf8_lossy(&output.stdout).to_string();
 
-        // Update server URL to use VM IP — replace any server line with the correct VM IP
-        kubeconfig = kubeconfig
-            .replace("https://127.0.0.1:6443", &format!("https://{}:6443", vm_ip))
-            .replace("https://localhost:6443", &format!("https://{}:6443", vm_ip));
-
-        // Also fix any IP that kubeadm may have advertised (the advertiseAddress)
-        // by replacing server lines generically
-        kubeconfig = kubeconfig
-            .lines()
-            .map(|line| {
-                if line.trim().starts_with("server: https://") && line.contains(":6443") {
-                    format!("    server: https://{}:6443", vm_ip)
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Rewrite server URL to the live VM IP using the pure helper (idempotent,
+        // handles any existing host: localhost, 127.0.0.1, old VM IP, cluster IP).
+        kubeconfig = crate::core::verify::rewrite_kubeconfig_server(&kubeconfig, vm_ip);
 
         // Replace context and user names to be cluster-specific
         // kubeadm generates names like "kubernetes-admin@{clusterName}" and "kubernetes-admin"
@@ -2970,8 +2936,153 @@ EOF"#,
         // Save kubeconfig
         self.save_kubeconfig(cluster_name, &kubeconfig).await?;
 
+        // Verify host→<vm_ip>:6443 TCP reachability (bounded retry, non-fatal).
+        // Apple Container uses VM-per-container networking; the host may not always have a
+        // direct route to the VM IP. We warn rather than hard-fail so the cluster remains
+        // usable for in-container kubectl even when host access is blocked.
+        let reachable = check_tcp_reachable(vm_ip, 6443, 5).await;
+        if !reachable {
+            let (bridge, gateway) = inspect_network_bridge(cluster_name, &self.cli_path);
+            let diag = crate::core::verify::build_unreachable_diagnostic(
+                cluster_name,
+                vm_ip,
+                6443,
+                bridge.as_deref(),
+                gateway.as_deref(),
+            );
+            warn!("{}", diag);
+        }
+
         info!("Kubeconfig saved successfully");
         Ok(())
+    }
+
+    /// Re-resolve the control-plane VM IP, rewrite the saved kubeconfig to use it,
+    /// and verify host→control-plane TCP reachability.
+    ///
+    /// Non-fatal: returns `Ok(())` even when the host cannot reach the API server;
+    /// a warning is printed in that case so the caller can surface it to the user.
+    /// Handles nodes that restarted with a new IP by fetching the live IP via
+    /// `get_container_ip` before rewriting.
+    pub async fn repair_kubeconfig(&self, cluster_name: &str) -> Result<()> {
+        info!("Repairing kubeconfig for cluster '{}'", cluster_name);
+
+        // Control-plane container is always named "<cluster>-control-plane".
+        let cp_name = format!("{}-control-plane", cluster_name);
+
+        // Re-resolve the live VM IP in case the node restarted with a new address.
+        let vm_ip = self
+            .get_container_ip(&cp_name)
+            .await
+            .context("Failed to get control-plane VM IP; is the cluster running?")?;
+        info!("Control-plane current IP: {}", vm_ip);
+
+        // Read the saved kubeconfig; fall back to fetching from the container if absent.
+        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
+        let kubeconfig_path = std::path::Path::new(&home_dir)
+            .join(".kube")
+            .join(cluster_name);
+
+        let current = if kubeconfig_path.exists() {
+            fs::read_to_string(&kubeconfig_path).context("Failed to read saved kubeconfig")?
+        } else {
+            info!("No saved kubeconfig found; fetching from container");
+            let mut cmd = std::process::Command::new(&self.cli_path);
+            cmd.args(["exec", &cp_name, "cat", "/etc/kubernetes/admin.conf"]);
+            let out = cmd
+                .output()
+                .context("Failed to run container exec to read kubeconfig")?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                return Err(anyhow::anyhow!(
+                    "Failed to read kubeconfig from container: {}",
+                    stderr
+                ));
+            }
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+
+        // Rewrite the server URL to the current VM IP (idempotent pure fn).
+        let rewritten = crate::core::verify::rewrite_kubeconfig_server(&current, &vm_ip);
+
+        // Persist the updated kubeconfig.
+        self.save_kubeconfig(cluster_name, &rewritten).await?;
+        info!("Kubeconfig rewritten for cluster '{}'", cluster_name);
+
+        // Re-check reachability after the rewrite.
+        println!("Checking host reachability to {}:6443 ...", vm_ip);
+        let reachable = check_tcp_reachable(&vm_ip, 6443, 5).await;
+        if reachable {
+            println!("  OK  {}:6443 is reachable from the host", vm_ip);
+        } else {
+            let (bridge, gateway) = inspect_network_bridge(cluster_name, &self.cli_path);
+            let diag = crate::core::verify::build_unreachable_diagnostic(
+                cluster_name,
+                &vm_ip,
+                6443,
+                bridge.as_deref(),
+                gateway.as_deref(),
+            );
+            warn!("{}", diag);
+        }
+
+        Ok(())
+    }
+}
+
+// ===========================================================================
+// kina-39 — TCP reachability probe helpers (module-level, not pub)
+// ===========================================================================
+
+/// Attempt to open a TCP connection to `addr:port` up to `attempts` times
+/// with a 1-second back-off between retries.  Returns `true` on the first
+/// successful connection, `false` if all attempts fail.
+async fn check_tcp_reachable(addr: &str, port: u16, attempts: u32) -> bool {
+    let socket_addr = format!("{}:{}", addr, port);
+    for i in 0..attempts {
+        if i > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
+        if tokio::net::TcpStream::connect(&socket_addr).await.is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Try to retrieve the bridge interface name and IPv4 gateway for a cluster's
+/// Apple Container network by running `container network inspect <cluster>`.
+/// Returns `(bridge, gateway)` where either/both may be `None` when the
+/// command is unavailable or the fields are absent in the output.
+fn inspect_network_bridge(cluster_name: &str, cli_path: &str) -> (Option<String>, Option<String>) {
+    let output = std::process::Command::new(cli_path)
+        .args(["network", "inspect", cluster_name, "--format", "json"])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let bridge = extract_json_string_field(&text, "bridge")
+                .or_else(|| extract_json_string_field(&text, "interfaceName"));
+            let gateway = extract_json_string_field(&text, "ipv4Gateway")
+                .or_else(|| extract_json_string_field(&text, "gateway"));
+            (bridge, gateway)
+        }
+        _ => (None, None),
+    }
+}
+
+/// Extract a simple JSON string field value from raw JSON text without
+/// pulling in an extra dependency.  Returns `None` when the field is absent
+/// or its value is not a JSON string.
+fn extract_json_string_field(json: &str, field: &str) -> Option<String> {
+    let pattern = format!("\"{}\":", field);
+    let idx = json.find(&pattern)?;
+    let rest = json[idx + pattern.len()..].trim_start();
+    if let Some(inner) = rest.strip_prefix('"') {
+        let end = inner.find('"')?;
+        Some(inner[..end].to_string())
+    } else {
+        None
     }
 }
 

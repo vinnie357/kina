@@ -171,6 +171,18 @@ pub struct ApproveCSRArgs {
     pub name: String,
 }
 
+/// Re-resolve the control-plane VM IP, rewrite the saved kubeconfig, and
+/// verify host → API server TCP reachability.
+///
+/// Use this after a node restarts with a new IP or when `kubectl` from the
+/// host fails with "no route to host" / "connection refused".
+#[derive(Args)]
+pub struct KubeconfigArgs {
+    /// Name of the cluster to repair
+    #[arg(default_value = "kina")]
+    pub name: String,
+}
+
 #[derive(clap::ValueEnum, Clone)]
 pub enum GetResource {
     /// List clusters
@@ -2348,6 +2360,39 @@ impl ApproveCSRArgs {
 
         println!("✅ Kubelet CSRs approved for cluster '{}'", self.name);
         println!("💡 This should fix TLS errors with kubectl logs/exec commands");
+        Ok(())
+    }
+}
+
+impl KubeconfigArgs {
+    pub async fn execute(&self, config: &Config) -> Result<()> {
+        let cluster_manager = ClusterManager::new(config)?;
+
+        // Verify the cluster exists before attempting the repair.
+        let clusters = cluster_manager.list_clusters().await?;
+        if clusters.is_empty() {
+            println!("No clusters found.");
+            println!();
+            println!("To create a new cluster, run:");
+            println!("  kina create [cluster-name]");
+            return Ok(());
+        }
+
+        let cluster_exists = clusters.iter().any(|c| c.name == self.name);
+        if !cluster_exists {
+            let cluster_names: Vec<&str> = clusters.iter().map(|c| c.name.as_str()).collect();
+            println!("Cluster '{}' does not exist.", self.name);
+            println!();
+            println!("Available clusters: {}", cluster_names.join(", "));
+            println!();
+            println!("To repair the kubeconfig for a specific cluster, run:");
+            println!("  kina kubeconfig <cluster-name>");
+            return Ok(());
+        }
+
+        println!("Repairing kubeconfig for cluster '{}'...", self.name);
+        cluster_manager.repair_kubeconfig(&self.name).await?;
+        println!("Kubeconfig for '{}' updated.", self.name);
         Ok(())
     }
 }
