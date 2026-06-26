@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::apple_container::AppleContainerClient;
-use super::kubernetes::KubernetesClient;
 use super::types::{ClusterInfo, ClusterStatus, CreateClusterOptions, LoadImageOptions};
 use crate::config::Config;
 
@@ -10,19 +9,16 @@ use crate::config::Config;
 pub struct ClusterManager {
     config: Config,
     apple_container: AppleContainerClient,
-    kubernetes: KubernetesClient,
 }
 
 impl ClusterManager {
     /// Create a new cluster manager
     pub fn new(config: &Config) -> Result<Self> {
         let apple_container = AppleContainerClient::new(config)?;
-        let kubernetes = KubernetesClient::new(config)?;
 
         Ok(Self {
             config: config.clone(),
             apple_container,
-            kubernetes,
         })
     }
 
@@ -267,34 +263,20 @@ impl ClusterManager {
         Ok(cluster)
     }
 
-    /// Bootstrap kubelet CSR auto-approval for a cluster
-    /// This prevents TLS errors with kubectl logs/exec by auto-approving kubelet-serving CSRs
+    /// Bootstrap kubelet CSR auto-approval for a cluster.
+    ///
+    /// Runs the approval inside the control-plane container. On Apple Container the host
+    /// cannot route to the in-VM API server, so the previous host-kubeconfig path failed
+    /// with "no route to host" and never approved anything. The in-container path also
+    /// covers PTP and single-node clusters, where no approval runs during creation.
     async fn bootstrap_kubelet_csrs(&self, cluster_name: &str) -> Result<()> {
         info!(
             "Bootstrapping kubelet CSR auto-approval for cluster '{}'",
             cluster_name
         );
 
-        // Get kubeconfig path where Apple Container actually saves it (~/.kube/{cluster_name})
-        let home_dir = std::env::var("HOME").context("HOME environment variable not set")?;
-        let kube_dir = std::path::Path::new(&home_dir).join(".kube");
-        let kubeconfig_path = kube_dir.join(cluster_name);
-
-        let kubeconfig_str = kubeconfig_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid kubeconfig path"))?;
-
-        info!(
-            "🔧 Using kubeconfig path for CSR auto-approval: {}",
-            kubeconfig_str
-        );
-
-        // Wait for and auto-approve kubelet-serving CSRs for 60 seconds
-        // This should be enough time for kubelet to generate its serving CSRs
-        self.kubernetes
-            .bootstrap_approve_kubelet_csrs(kubeconfig_str, 60)
-            .await
-            .context("Failed to bootstrap kubelet CSR auto-approval")?;
+        self.apple_container
+            .approve_cluster_kubelet_csrs(cluster_name);
 
         info!(
             "Kubelet CSR bootstrap completed for cluster '{}'",
@@ -315,22 +297,10 @@ impl ClusterManager {
             return Err(anyhow::anyhow!("Cluster '{}' does not exist", cluster_name));
         }
 
-        // Get kubeconfig path for the cluster
-        let kubeconfig_path = self
-            .config
-            .kubernetes
-            .kubeconfig_dir
-            .join(format!("{}.yaml", cluster_name));
-
-        let kubeconfig_str = kubeconfig_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid kubeconfig path"))?;
-
-        // Auto-approve all pending kubelet-serving CSRs
-        self.kubernetes
-            .auto_approve_kubelet_csrs(kubeconfig_str)
-            .await
-            .context("Failed to approve kubelet CSRs")?;
+        // Approve inside the control-plane container — the host cannot reach the in-VM
+        // API server on Apple Container (host kubectl fails with "no route to host").
+        self.apple_container
+            .approve_cluster_kubelet_csrs(cluster_name);
 
         info!(
             "Kubelet CSR approval completed for cluster '{}'",

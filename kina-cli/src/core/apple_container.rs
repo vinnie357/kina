@@ -2787,6 +2787,19 @@ EOF"#,
         }
     }
 
+    /// Approve pending kubelet-serving CSRs for a named cluster by exec-ing into its
+    /// control-plane container (`<cluster>-control-plane`).
+    ///
+    /// This is the post-create / manual catch-all. It runs inside the container because
+    /// on Apple Container the host cannot route to the in-VM API server — host-side
+    /// `kubectl` against the saved kubeconfig fails with "no route to host", so the
+    /// previous host-kubeconfig approval never approved anything. Covers PTP and
+    /// single-node clusters, where no in-create approval runs.
+    pub fn approve_cluster_kubelet_csrs(&self, cluster_name: &str) {
+        let cp_name = format!("{}-control-plane", cluster_name);
+        self.approve_pending_kubelet_csrs(&cp_name);
+    }
+
     /// Install Cilium CNI plugin using the pinned cilium-cli and topology-correct helm values.
     ///
     /// Uses [`build_cilium_cli_install_script`] and either [`build_cilium_install_cmd`] (stock
