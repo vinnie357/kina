@@ -34,7 +34,7 @@ spec:
 #      - name: nginx-log
 #        emptyDir: {}
       containers:
-      - image: nginx/nginx-ingress:5.5.0
+      - image: nginx/nginx-ingress:5.5.0@sha256:5ee930ff400c84421eec05c19d3a274c473171ad301b152554bf6bdb657200a2
         imagePullPolicy: IfNotPresent
         name: nginx-ingress
         ports:
