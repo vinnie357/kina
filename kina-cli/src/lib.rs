@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod core;
 pub mod errors;
+pub mod version;
 
 // Re-export commonly used types
 pub use config::Config;
