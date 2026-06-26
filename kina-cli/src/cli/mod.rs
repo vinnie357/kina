@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::config::Config;
 use crate::core::cluster::ClusterManager;
@@ -81,6 +81,32 @@ pub enum Commands {
 
     /// Build kina artefacts (node images, etc.)
     Build(BuildArgs),
+
+    /// Show build provenance (git sha, build timestamp, rustc, target)
+    Version(VersionArgs),
+}
+
+/// Arguments for the `version` subcommand.
+#[derive(Args, Debug)]
+pub struct VersionArgs {
+    /// Output version info as JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl VersionArgs {
+    pub async fn execute(&self, config: &Config) -> Result<()> {
+        if self.json {
+            println!("{}", crate::version::version_json(&crate::version::BUILD));
+        } else {
+            println!("{}", crate::version::human_version(&crate::version::BUILD));
+            match ClusterManager::new(config) {
+                Ok(manager) => println!("Apple Container {}", manager.container_version()),
+                Err(e) => println!("Apple Container: not available ({})", e),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Cli {
@@ -99,8 +125,9 @@ impl Cli {
             Some(Commands::Config(args)) => args.execute(config).await,
             Some(Commands::Verify(args)) => args.execute(config).await,
             Some(Commands::Build(args)) => args.execute(config).await,
+            Some(Commands::Version(args)) => args.execute(config).await,
             None => {
-                println!("kina {}", env!("CARGO_PKG_VERSION"));
+                println!("{}", crate::version::human_version(&crate::version::BUILD));
                 match ClusterManager::new(config) {
                     Ok(manager) => {
                         println!("Apple Container {}", manager.container_version());

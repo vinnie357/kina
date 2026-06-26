@@ -89,8 +89,13 @@ The mise github backend auto-selects the `aarch64-apple-darwin` binary on macOS 
 git clone https://github.com/vinnie357/kina.git
 cd kina
 
-# Install using Cargo
-cargo install --path kina-cli
+# Install using Cargo (--force required: the version string is stamped at
+# build time, so cargo's default "same version, skip" check would keep the
+# old binary with a stale git sha).
+cargo install --path kina-cli --force
+
+# Confirm the git sha is present in the installed binary
+kina --version
 
 # OR using mise (if installed)
 mise run kina:install
