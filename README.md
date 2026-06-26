@@ -25,7 +25,7 @@
 - 🏗️ **Native Apple Container Integration** - Leverage macOS container technology for optimal performance
 - ☸️ **Kubernetes API Compatibility** - Full Kubernetes cluster functionality with kubectl integration
 - 🌐 **CNI Plugin Support** - Choose between PTP (default) and Cilium for container networking
-- 🔧 **Nginx Ingress Controller** - Built-in support for nginx-ingress installation and configuration
+- 🔧 **Ingress & Gateway API** - Built-in support for nginx-ingress, or Traefik with Gateway API (mutually exclusive, one controller per cluster)
 - 📊 **Metrics Server** - One-command install for `kubectl top` and Horizontal Pod Autoscaling
 - ⚙️ **Flexible Configuration** - TOML-based configuration with sensible defaults
 - 📋 **Comprehensive CLI** - Rich command set for cluster management and operations
@@ -160,13 +160,20 @@ kubectl get nodes
 kina create demo --cni cilium --wait 300
 ```
 
-### Install Nginx Ingress Controller and Demo App
+### Install an Ingress Controller and Demo App
+
+Install an ingress controller **before** the demo app — `kina install demo-app`
+auto-selects its route object based on what's installed on the cluster: a
+Gateway API `HTTPRoute` if Traefik (Gateway API) is present, otherwise a
+plain nginx `Ingress`. Only **one** ingress controller may run per cluster,
+since both nginx-ingress and Traefik are DaemonSets binding host ports 80/443
+— installing a second one is rejected with an error.
 
 ```bash
 # Install nginx-ingress (manifests embedded in binary — works from any directory)
 kina install nginx-ingress --cluster my-cluster
 
-# Install demo application
+# Install demo application (creates an nginx Ingress, since nginx-ingress is installed)
 kina install demo-app --cluster my-cluster
 
 # Install metrics-server (enables `kubectl top` and HPA)
@@ -174,6 +181,15 @@ kina install metrics-server --cluster my-cluster
 
 # Verify the cluster end-to-end
 kina verify my-cluster
+```
+
+**Alternative: Traefik (Gateway API)**
+```bash
+# Install traefik instead of nginx-ingress (also installs the Gateway API CRDs)
+kina install traefik --cluster my-cluster
+
+# Install demo application (creates a Gateway API HTTPRoute, since traefik is installed)
+kina install demo-app --cluster my-cluster
 ```
 
 ### Check Cluster Status
@@ -284,11 +300,11 @@ kina export [NAME] [OPTIONS]
 ### Addon Management
 
 ```bash
-# Install addons
-kina install nginx-ingress --cluster NAME
-kina install ingress-nginx --cluster NAME
-kina install cni --cluster NAME
-kina install metrics-server --cluster NAME
+# Install addons (only one ingress controller may be installed per cluster)
+kina install nginx-ingress --cluster NAME    # NGINX Ingress Controller (classic Ingress)
+kina install traefik --cluster NAME          # Gateway API controller (installs Gateway API CRDs)
+kina install demo-app --cluster NAME         # Demo workload; auto-selects HTTPRoute or Ingress
+kina install metrics-server --cluster NAME   # Enables `kubectl top` and HPA
 ```
 
 ### Cluster Operations

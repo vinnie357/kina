@@ -137,3 +137,28 @@ pub fn parse_node_versions(stdout: &str) -> std::collections::HashMap<String, St
         })
         .collect()
 }
+
+/// Parse `kubectl get pods -n <ns> --no-headers` output into (ready, total).
+/// A pod is "ready" when its READY column (col 1, "a/b") has a == b.
+/// Returns `None` when there are no pod lines (namespace empty / absent).
+pub fn pods_all_ready(no_headers_stdout: &str) -> Option<(usize, usize)> {
+    let lines: Vec<&str> = no_headers_stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let total = lines.len();
+    let ready = lines
+        .iter()
+        .filter(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .and_then(|col| col.split_once('/'))
+                .map(|(a, b)| a == b)
+                .unwrap_or(false)
+        })
+        .count();
+    Some((ready, total))
+}
