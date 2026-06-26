@@ -226,7 +226,7 @@ data:
                 </div>
                 <div class="feature">
                     <span class="feature-icon">&#x1F310;</span>
-                    <span>NGINX Ingress Controller (nginx.org) installed</span>
+                    <span>Ingress controller installed: ${CONTROLLER}</span>
                 </div>
                 <div class="feature">
                     <span class="feature-icon">&#x1F4E6;</span>
