@@ -73,6 +73,9 @@ pub enum Commands {
     #[command(name = "approve-csr")]
     ApproveCSR(ApproveCSRArgs),
 
+    /// Re-resolve control-plane IP, rewrite kubeconfig, and verify host reachability
+    Kubeconfig(KubeconfigArgs),
+
     /// Manage kina configuration
     Config(ConfigArgs),
 
@@ -122,6 +125,7 @@ impl Cli {
             Some(Commands::Install(args)) => args.execute(config).await,
             Some(Commands::Export(args)) => args.execute(config).await,
             Some(Commands::ApproveCSR(args)) => args.execute(config).await,
+            Some(Commands::Kubeconfig(args)) => args.execute(config).await,
             Some(Commands::Config(args)) => args.execute(config).await,
             Some(Commands::Verify(args)) => args.execute(config).await,
             Some(Commands::Build(args)) => args.execute(config).await,
