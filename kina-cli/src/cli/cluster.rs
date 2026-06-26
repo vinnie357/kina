@@ -725,8 +725,18 @@ impl InstallArgs {
             .status();
         match rollout {
             Ok(s) if s.success() => info!("nginx-ingress DaemonSet rollout complete"),
-            Ok(_) => warn!("nginx-ingress rollout timed out or reported failure; proceeding"),
-            Err(e) => warn!("Failed to check nginx-ingress rollout status: {}", e),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "nginx-ingress DaemonSet did not roll out within 120s; the controller is not ready. \
+                     Inspect with: kubectl -n nginx-ingress get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check nginx-ingress DaemonSet rollout status: {}",
+                    e
+                ))
+            }
         }
 
         Ok(())
@@ -819,8 +829,18 @@ impl InstallArgs {
             .status();
         match rollout {
             Ok(s) if s.success() => info!("traefik DaemonSet rollout complete"),
-            Ok(_) => warn!("traefik DaemonSet rollout timed out or reported failure; proceeding"),
-            Err(e) => warn!("Failed to check traefik DaemonSet rollout status: {}", e),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "traefik DaemonSet did not roll out within 120s; the controller is not ready. \
+                     Inspect with: kubectl -n traefik get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check traefik DaemonSet rollout status: {}",
+                    e
+                ))
+            }
         }
 
         info!("Waiting for Traefik Gateway to reach Programmed condition (timeout=60s)...");
@@ -841,12 +861,17 @@ impl InstallArgs {
         match gateway_ready {
             Ok(s) if s.success() => info!("Traefik Gateway is Programmed"),
             Ok(_) => {
-                warn!("Traefik Gateway did not reach Programmed condition within 60s; proceeding")
+                return Err(anyhow::anyhow!(
+                    "Traefik Gateway did not reach the Programmed condition within 60s; routes cannot attach. \
+                     Inspect with: kubectl -n traefik get gateway traefik -o wide"
+                ))
             }
-            Err(e) => warn!(
-                "Failed to wait for Traefik Gateway Programmed condition: {}",
-                e
-            ),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to wait for Traefik Gateway Programmed condition: {}",
+                    e
+                ))
+            }
         }
 
         Ok(())
