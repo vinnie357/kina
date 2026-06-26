@@ -285,6 +285,16 @@ impl ClusterManager {
         Ok(())
     }
 
+    /// Re-resolve the control-plane VM IP, rewrite `~/.kube/<cluster>` using the
+    /// pure `rewrite_kubeconfig_server` helper, and verify host TCP reachability.
+    ///
+    /// Non-fatal: returns `Ok(())` even when the host cannot reach the API server
+    /// (a `warn!` is emitted with the full `build_unreachable_diagnostic` message).
+    /// Use this from the `kina kubeconfig <cluster>` subcommand.
+    pub async fn repair_kubeconfig(&self, cluster_name: &str) -> Result<()> {
+        self.apple_container.repair_kubeconfig(cluster_name).await
+    }
+
     /// Manually approve any pending kubelet-serving CSRs for a cluster
     /// This can be used to fix TLS issues in existing clusters
     pub async fn approve_kubelet_csrs(&self, cluster_name: &str) -> Result<()> {
