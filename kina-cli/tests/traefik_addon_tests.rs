@@ -1,143 +1,77 @@
 //! Adversarial-TDD tests for Traefik addon followup issues: kina-34, kina-35, kina-36.
 //!
-//! ## P2 contract — these tests are INTENTIONALLY RED
+//! ## Migration note (kina-32 / nginx-gateway-fabric addon)
 //!
-//! Every test in this file references a pub fn or type that does NOT yet exist in
-//! `kina_cli::core::verify`.  The compile errors ARE the spec.  The separate P3
-//! implementer makes them green WITHOUT modifying this file.
+//! This file has been updated from the two-arg bool API to the `ActiveController` enum
+//! API.  The old functions (`select_controller_label`, `select_demo_route_type`,
+//! `controller_conflict_message`) are REMOVED by the implementer; this file now calls:
+//!
+//!   `controller_label(ActiveController)`
+//!   `demo_route_type(ActiveController)`
+//!   `gateway_parent_ref(ActiveController)`
+//!   `controller_conflict_message_multi(installing, present)`
+//!
+//! Coverage is equivalent to the previous version.  One new Traefik-specific test
+//! (T36/Traefik-gateway-parent-ref) is added to exercise the parentRef accessor.
+//!
+//! ## P2 contract — these tests are INTENTIONALLY RED until the implementer
+//! adds the new API to `kina_cli::core::verify`.
 //!
 //! All tests are pure: no live kubectl, no process spawns, no network, no filesystem.
 //!
 //! ## Implementer binding (kina-cli/src/core/verify.rs)
 //!
-//! Add the following items to `kina_cli::core::verify` — exact signatures are binding:
+//! Remove the following (no longer tested here, superseded by the enum API):
+//!   `pub fn select_controller_label(gateway_present: bool) -> &'static str`
+//!   `pub fn select_demo_route_type(gateway_present: bool) -> DemoRouteType`
+//!   `pub fn controller_conflict_message(installing: &str, conflicting_ns_present: bool) -> Option<String>`
 //!
-//! ### kina-34 — controller label
-//! ```rust
-//! /// Return the active-controller label string for `${CONTROLLER}` substitution
-//! /// in demo-app.yaml templates.
-//! ///   gateway_present = true  → "traefik"
-//! ///   gateway_present = false → "nginx-ingress"
-//! pub fn select_controller_label(gateway_present: bool) -> &'static str;
-//! ```
-//! Also: add a `${CONTROLLER}` placeholder in `kina-cli/manifests/demo-app.yaml`
-//! at line 198 (the hardcoded `nginx-ingress` info-value) and update
-//! `render_demo_manifest` (or the `install_demo_app` call-site) to substitute it.
-//!
-//! ### kina-35 — ingress readiness classification
-//! ```rust
-//! #[derive(Debug, PartialEq)]
-//! pub enum IngressReadiness {
-//!     /// Namespace absent or empty — controller is optional, not an error.
-//!     NotInstalled,
-//!     /// Namespace has pods; ready/total counts from the pods stdout.
-//!     Ready { ready: usize, total: usize },
-//!     /// kubectl process failed for a reason other than "namespace not found"
-//!     /// (e.g. API server unreachable).  Must NOT be silently collapsed to
-//!     /// NotInstalled — callers surface this to the user.
-//!     CommandFailure(String),
-//! }
-//!
-//! /// Map raw kubectl output to a typed readiness status.
-//! ///
-//! /// Decision table:
-//! ///   exit_ok=false, stderr contains "not found"          → NotInstalled
-//! ///   exit_ok=false, stderr does NOT contain "not found"  → CommandFailure(stderr)
-//! ///   exit_ok=true, pods_stdout is empty                  → NotInstalled
-//! ///   exit_ok=true, pods_stdout has lines                 → Ready { ready, total }
-//! ///     (uses the same ready-column logic as pods_all_ready)
-//! pub fn classify_ingress_kubectl_result(
-//!     exit_ok: bool,
-//!     pods_stdout: &str,
-//!     stderr: &str,
-//! ) -> IngressReadiness;
-//! ```
-//!
-//! ### kina-36 — route type selection
-//! ```rust
-//! #[derive(Debug, PartialEq)]
-//! pub enum DemoRouteType {
-//!     /// Apply demo-app-route.yaml (HTTPRoute targeting the Traefik Gateway).
-//!     HttpRoute,
-//!     /// Apply demo-app-ingress.yaml (nginx Ingress).
-//!     NginxIngress,
-//! }
-//!
-//! /// Decide which routing object to apply for the demo app.
-//! ///   gateway_present = true  → HttpRoute
-//! ///   gateway_present = false → NginxIngress
-//! pub fn select_demo_route_type(gateway_present: bool) -> DemoRouteType;
-//! ```
-//!
-//! ### kina-36 — one-controller conflict guard
-//! ```rust
-//! /// Return `Some(message)` when installing `installing_controller` is blocked
-//! /// because the conflicting controller's namespace is already present.
-//! /// Return `None` when installation is allowed.
-//! ///
-//! /// installing_controller: "nginx-ingress" or "traefik"
-//! /// conflicting_ns_present: true = the OTHER controller's namespace exists
-//! ///
-//! /// When installing "nginx-ingress" and blocked, message must mention "traefik".
-//! /// When installing "traefik" and blocked, message must mention "nginx-ingress".
-//! pub fn controller_conflict_message(
-//!     installing_controller: &str,
-//!     conflicting_ns_present: bool,
-//! ) -> Option<String>;
-//! ```
-//!
-//! ## kina-33 note (out of scope for unit tests)
-//!
-//! kina-33 (replace fixed `tokio::time::sleep` in install_* with bounded readiness polling)
-//! requires process-level integration: the sleep is inside `install_nginx_ingress`,
-//! `install_traefik`, and `install_demo_app` and drives real kubectl pod-wait logic.
-//! No pure seam can be isolated for it at this time.  The implementer must replace
-//! the 5-second fixed `tokio::time::sleep` calls with a bounded readiness poll that
-//! calls `kubectl wait --for=condition=Ready` (or equivalent) with a configurable
-//! timeout, without adding a unit-testable pure function.
+//! Add (exact signatures — binding for this file and nginx_gateway_fabric_addon_tests.rs):
+//!   `pub enum ActiveController { Traefik, NginxGatewayFabric, NginxIngress, None }`
+//!   `pub fn controller_label(c: ActiveController) -> &'static str`
+//!   `pub fn demo_route_type(c: ActiveController) -> DemoRouteType`
+//!   `pub fn gateway_parent_ref(c: ActiveController) -> Option<(&'static str, &'static str, &'static str)>`
+//!   `pub fn controller_conflict_message_multi(installing: &str, present: &[&str]) -> Option<String>`
 
 use kina_cli::core::verify::{
-    classify_ingress_kubectl_result, controller_conflict_message, select_controller_label,
-    select_demo_route_type, DemoRouteType, IngressReadiness,
+    classify_ingress_kubectl_result, controller_conflict_message_multi, controller_label,
+    demo_route_type, gateway_parent_ref, ActiveController, DemoRouteType, IngressReadiness,
 };
 
 // ===========================================================================
-// kina-34: select_controller_label
-// The demo-app HTML page must reflect the ACTIVE controller; currently the
-// template has a hardcoded "nginx-ingress" at manifests/demo-app.yaml:198.
+// kina-34 (migrated): controller_label — gateway label for ${CONTROLLER}
 // ===========================================================================
 
-/// kina-34/T1 — gateway present → controller label is "traefik".
-/// When a Traefik Gateway exists the branding must say "traefik", not "nginx-ingress".
+/// kina-34/T1 — Traefik controller label is "traefik".
+/// When the Traefik Gateway is active the template must say "traefik".
 #[test]
 fn controller_label_is_traefik_when_gateway_present() {
-    let label = select_controller_label(true);
+    let label = controller_label(ActiveController::Traefik);
     assert_eq!(
         label, "traefik",
-        "When a Gateway is present the controller label must be \"traefik\", got \"{}\"",
+        "controller_label(Traefik) must return \"traefik\"; got \"{}\"",
         label,
     );
 }
 
-/// kina-34/T2 — no gateway → controller label is "nginx-ingress".
-/// When nginx-ingress is active, the branding must say "nginx-ingress".
+/// kina-34/T2 — NginxIngress controller label is "nginx-ingress".
+/// When no gateway is active the label must revert to "nginx-ingress".
 #[test]
 fn controller_label_is_nginx_ingress_when_no_gateway() {
-    let label = select_controller_label(false);
+    let label = controller_label(ActiveController::NginxIngress);
     assert_eq!(
         label, "nginx-ingress",
-        "When no Gateway is present the controller label must be \"nginx-ingress\", got \"{}\"",
+        "controller_label(NginxIngress) must return \"nginx-ingress\"; got \"{}\"",
         label,
     );
 }
 
 // ===========================================================================
-// kina-35: classify_ingress_kubectl_result
+// kina-35: classify_ingress_kubectl_result (unchanged — no API migration)
 // Must distinguish controller-absent (NotInstalled) from API failure (CommandFailure).
 // ===========================================================================
 
-/// kina-35/T1 — exit_ok=false, stderr mentions "not found" → NotInstalled (optional absence).
-/// Namespace doesn't exist = controller never installed = not an error.
+/// kina-35/T1 — exit_ok=false, stderr mentions "not found" → NotInstalled.
 #[test]
 fn ingress_readiness_namespace_not_found_is_not_installed() {
     let result = classify_ingress_kubectl_result(
@@ -153,8 +87,7 @@ fn ingress_readiness_namespace_not_found_is_not_installed() {
     );
 }
 
-/// kina-35/T2 — exit_ok=false, stderr is a connectivity failure → CommandFailure, NOT NotInstalled.
-/// Silently collapsing an API failure into "not installed" hides real cluster problems.
+/// kina-35/T2 — exit_ok=false, stderr is a connectivity failure → CommandFailure.
 #[test]
 fn ingress_readiness_connection_failure_is_command_failure() {
     let stderr = "Unable to connect to the server: dial tcp 127.0.0.1:6443: connection refused";
@@ -166,7 +99,7 @@ fn ingress_readiness_connection_failure_is_command_failure() {
     );
 }
 
-/// kina-35/T3 — exit_ok=true, empty pods stdout → NotInstalled (namespace exists but is empty).
+/// kina-35/T3 — exit_ok=true, empty pods stdout → NotInstalled.
 #[test]
 fn ingress_readiness_empty_pods_is_not_installed() {
     let result = classify_ingress_kubectl_result(true, "", "");
@@ -192,7 +125,6 @@ fn ingress_readiness_all_pods_ready_is_ready() {
 }
 
 /// kina-35/T5 — exit_ok=true, 1 of 2 pods ready → Ready { ready: 1, total: 2 }.
-/// Partial-ready is still classified Ready (with accurate counts), not NotInstalled.
 #[test]
 fn ingress_readiness_partial_ready_reports_counts() {
     let stdout = "traefik-abc   1/1   Running   0   2m\ntraefik-def   0/1   Pending   0   2m\n";
@@ -206,89 +138,103 @@ fn ingress_readiness_partial_ready_reports_counts() {
 }
 
 // ===========================================================================
-// kina-36: select_demo_route_type — route auto-selection
+// kina-36 (migrated): demo_route_type — route auto-selection
 // ===========================================================================
 
-/// kina-36/T1 — gateway present → select HTTPRoute (Traefik Gateway API).
+/// kina-36/T1 — Traefik → HttpRoute (Gateway API HTTPRoute).
 #[test]
-fn route_type_is_httproute_when_gateway_present() {
-    let route = select_demo_route_type(true);
+fn route_type_is_httproute_when_traefik_active() {
+    let route = demo_route_type(ActiveController::Traefik);
     assert_eq!(
         route,
         DemoRouteType::HttpRoute,
-        "Gateway present must select HttpRoute, got {:?}",
+        "demo_route_type(Traefik) must be HttpRoute, got {:?}",
         route,
     );
 }
 
-/// kina-36/T2 — no gateway → select NginxIngress.
+/// kina-36/T2 — NginxIngress → NginxIngress (classic Ingress object).
 #[test]
 fn route_type_is_nginx_ingress_when_no_gateway() {
-    let route = select_demo_route_type(false);
+    let route = demo_route_type(ActiveController::NginxIngress);
     assert_eq!(
         route,
         DemoRouteType::NginxIngress,
-        "No gateway must select NginxIngress, got {:?}",
+        "demo_route_type(NginxIngress) must be NginxIngress, got {:?}",
         route,
     );
 }
 
 // ===========================================================================
-// kina-36: controller_conflict_message — one-controller guard (both directions)
+// kina-36 (migrated): controller_conflict_message_multi — one-controller guard
+// The old two-arg bool API is replaced by the multi-controller list API.
+// Traefik-specific cases: blocking nginx-ingress ↔ traefik, plus NGF blocking.
 // ===========================================================================
 
-/// kina-36/T3 — traefik namespace present → nginx-ingress install blocked.
-/// Exercises the traefik-present-blocks-nginx direction of the guard.
+/// kina-36/T3 — traefik present → nginx-ingress install blocked.
 #[test]
 fn nginx_install_blocked_when_traefik_namespace_present() {
-    let msg = controller_conflict_message("nginx-ingress", true);
+    let msg = controller_conflict_message_multi("nginx-ingress", &["traefik"]);
     assert!(
         msg.is_some(),
         "nginx-ingress install must be blocked when traefik namespace is present",
     );
-    let msg = msg.unwrap();
     assert!(
-        msg.to_lowercase().contains("traefik"),
-        "Block message for nginx-ingress must mention \"traefik\"; got: {}",
-        msg,
+        msg.unwrap().to_lowercase().contains("traefik"),
+        "Block message for nginx-ingress install must mention \"traefik\"",
     );
 }
 
-/// kina-36/T4 — traefik namespace absent → nginx-ingress install allowed.
+/// kina-36/T4 — traefik absent → nginx-ingress install allowed.
 #[test]
-fn nginx_install_allowed_when_traefik_namespace_absent() {
-    let msg = controller_conflict_message("nginx-ingress", false);
+fn nginx_install_allowed_when_no_conflict_present() {
+    let msg = controller_conflict_message_multi("nginx-ingress", &[]);
     assert!(
         msg.is_none(),
-        "nginx-ingress install must be allowed when traefik is absent, got: {:?}",
+        "nginx-ingress install must be allowed when no other controller is present; got: {:?}",
         msg,
     );
 }
 
-/// kina-36/T5 — nginx-ingress namespace present → traefik install blocked.
-/// Exercises the nginx-present-blocks-traefik direction of the guard.
+/// kina-36/T5 — nginx-ingress present → traefik install blocked.
 #[test]
 fn traefik_install_blocked_when_nginx_ingress_namespace_present() {
-    let msg = controller_conflict_message("traefik", true);
+    let msg = controller_conflict_message_multi("traefik", &["nginx-ingress"]);
     assert!(
         msg.is_some(),
         "traefik install must be blocked when nginx-ingress namespace is present",
     );
-    let msg = msg.unwrap();
     assert!(
-        msg.to_lowercase().contains("nginx-ingress"),
-        "Block message for traefik must mention \"nginx-ingress\"; got: {}",
+        msg.unwrap().to_lowercase().contains("nginx-ingress"),
+        "Block message for traefik install must mention \"nginx-ingress\"",
+    );
+}
+
+/// kina-36/T6 — nginx-ingress absent → traefik install allowed.
+#[test]
+fn traefik_install_allowed_when_no_conflict_present() {
+    let msg = controller_conflict_message_multi("traefik", &[]);
+    assert!(
+        msg.is_none(),
+        "traefik install must be allowed when no other controller is present; got: {:?}",
         msg,
     );
 }
 
-/// kina-36/T6 — nginx-ingress namespace absent → traefik install allowed.
+// ===========================================================================
+// kina-36 + kina-32: Traefik gateway_parent_ref (new test)
+// ===========================================================================
+
+/// kina-36+32/T7 — Traefik parentRef is (name="traefik", ns="traefik", sectionName="web").
+/// Verifies Traefik Gateway listener sectionName is preserved in the enum API.
 #[test]
-fn traefik_install_allowed_when_nginx_ingress_namespace_absent() {
-    let msg = controller_conflict_message("traefik", false);
-    assert!(
-        msg.is_none(),
-        "traefik install must be allowed when nginx-ingress is absent, got: {:?}",
-        msg,
+fn traefik_gateway_parent_ref_correct() {
+    let parent = gateway_parent_ref(ActiveController::Traefik);
+    assert_eq!(
+        parent,
+        Some(("traefik", "traefik", "web")),
+        "gateway_parent_ref(Traefik) must return \
+         Some((\"traefik\",\"traefik\",\"web\")); got {:?}",
+        parent,
     );
 }

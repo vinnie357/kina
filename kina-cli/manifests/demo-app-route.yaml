@@ -5,9 +5,9 @@ metadata:
   namespace: default
 spec:
   parentRefs:
-  - name: traefik
-    namespace: traefik
-    sectionName: web
+  - name: ${GATEWAY_NAME}
+    namespace: ${GATEWAY_NAMESPACE}
+    sectionName: ${GATEWAY_SECTION}
   hostnames:
   - ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}
   rules:

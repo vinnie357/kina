@@ -1,0 +1,16 @@
+# Gateway: nginx in ns nginx-gateway, HTTP :80, allowedRoutes from All namespaces
+# parentRef sectionName for HTTPRoutes: "http"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx
+  namespace: nginx-gateway
+spec:
+  gatewayClassName: nginx
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All
