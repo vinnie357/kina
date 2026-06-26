@@ -1081,6 +1081,11 @@ impl AppleContainerClient {
         // After all workers have joined, re-run the Cilium readiness gate and then
         // wait for all nodes to be Ready before reporting success.
         if matches!(cni, CniPlugin::Cilium) {
+            // Issue #43: worker kubelets submit their serving CSRs only after they join,
+            // so the approval during control-plane Cilium install does not cover them.
+            // Re-approve now so `cilium status` can exec into the worker cilium pods;
+            // otherwise the gate fails with "tls: internal error" on those pods.
+            self.approve_pending_kubelet_csrs(&cp_name);
             info!("Re-running Cilium readiness gate after all workers joined");
             let readiness_cmd =
                 "KUBECONFIG=/etc/kubernetes/admin.conf cilium status --wait --wait-duration 5m";
@@ -2735,6 +2740,53 @@ EOF"#,
         Ok(())
     }
 
+    /// Approve any pending kubelet-serving CSRs by exec-ing kubectl inside the
+    /// control-plane container.
+    ///
+    /// kubeadm sets `serverTLSBootstrap: true`, so each kubelet obtains its serving
+    /// certificate via a CertificateSigningRequest that stays Pending until approved.
+    /// Until then, any API path through the kubelet serving port (:10250) — including
+    /// `cilium status` probes that exec into pods via the kubelet API — fails with
+    /// "remote error: tls: internal error", and cilium-operator loses leader election
+    /// in a 5-minute backoff cascade that outlasts the readiness gate.
+    ///
+    /// Worker kubelets submit their serving CSRs only AFTER they join, so this must run
+    /// again after workers join — not just during the control-plane Cilium install
+    /// (issue #43). A 15-second wait gives a freshly-joined kubelet time to submit its
+    /// CSR. Non-fatal: if no CSRs are pending the approve step is a no-op.
+    fn approve_pending_kubelet_csrs(&self, container_name: &str) {
+        info!("Approving pending kubelet-serving CSRs");
+        let csr_approve_cmd = "\
+            sleep 15 && \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr -o name 2>/dev/null | \
+            grep 'csr.node.eks.amazonaws.com\\|certificatesigningrequest' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            KUBECONFIG=/etc/kubernetes/admin.conf \
+            kubectl get csr --no-headers 2>/dev/null | \
+            awk '/Pending/{print $1}' | \
+            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
+            2>/dev/null; \
+            true";
+        let mut cmd = std::process::Command::new(&self.cli_path);
+        cmd.args(["exec", container_name, "sh", "-c", csr_approve_cmd]);
+        match cmd.output() {
+            Ok(out) if out.status.success() => {
+                info!("Kubelet CSR approval step completed");
+            }
+            Ok(out) => {
+                warn!(
+                    "Kubelet CSR approval step returned non-zero (may be no CSRs yet): {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Err(e) => {
+                warn!("Failed to run kubelet CSR approval step (non-fatal): {}", e);
+            }
+        }
+    }
+
     /// Install Cilium CNI plugin using the pinned cilium-cli and topology-correct helm values.
     ///
     /// Uses [`build_cilium_cli_install_script`] and either [`build_cilium_install_cmd`] (stock
@@ -2810,53 +2862,11 @@ EOF"#,
             CILIUM_VERSION
         );
 
-        // Step 4a: Approve pending kubelet-serving CSRs before the readiness gate.
-        //
-        // kubeadm sets `serverTLSBootstrap: true` in the kubelet config, which means
-        // kubelet generates a serving certificate via a CertificateSigningRequest rather
-        // than using a self-signed cert. The CSR is pending until explicitly approved.
-        // Until approved, any API path that goes through the kubelet serving port (:10250)
-        // — including `cilium status --wait` probes that exec into pods via the kubelet API
-        // — fails with "remote error: tls: internal error".
-        //
-        // cilium-operator repeatedly loses leader election when those TLS handshakes fail,
-        // producing a 5-minute backoff cascade that outlasts the readiness gate duration.
-        //
-        // Fix: approve any pending kubelet CSRs right after `cilium install`, before the
-        // readiness gate. A 15-second wait gives kubelet time to submit its CSR after
-        // the CNI is initialized (Cilium sets up the pod network, kubelet comes up healthy,
-        // then submits). Errors are warned but not fatal — if no CSRs exist yet, the
-        // approve step is a no-op and the readiness gate will surface real failures.
-        info!("Approving pending kubelet-serving CSRs before readiness gate");
-        let csr_approve_cmd = "\
-            sleep 15 && \
-            KUBECONFIG=/etc/kubernetes/admin.conf \
-            kubectl get csr -o name 2>/dev/null | \
-            grep 'csr.node.eks.amazonaws.com\\|certificatesigningrequest' | \
-            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
-            2>/dev/null; \
-            KUBECONFIG=/etc/kubernetes/admin.conf \
-            kubectl get csr --no-headers 2>/dev/null | \
-            awk '/Pending/{print $1}' | \
-            xargs -r kubectl certificate approve --kubeconfig=/etc/kubernetes/admin.conf \
-            2>/dev/null; \
-            true";
-        let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args(["exec", container_name, "sh", "-c", csr_approve_cmd]);
-        match cmd.output() {
-            Ok(out) if out.status.success() => {
-                info!("Kubelet CSR approval step completed");
-            }
-            Ok(out) => {
-                warn!(
-                    "Kubelet CSR approval step returned non-zero (may be no CSRs yet): {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-            }
-            Err(e) => {
-                warn!("Failed to run kubelet CSR approval step (non-fatal): {}", e);
-            }
-        }
+        // Step 4a: Approve pending kubelet-serving CSRs before the readiness gate so
+        // `cilium status` exec probes don't hit "remote error: tls: internal error".
+        // At this point only the control-plane kubelet has a CSR; worker CSRs are
+        // approved again after workers join (issue #43). See approve_pending_kubelet_csrs.
+        self.approve_pending_kubelet_csrs(container_name);
 
         // Step 4b: Readiness gate — wait until Cilium reports healthy.
         // Bounded to 5 minutes; fail fast with diagnostics if exceeded.
