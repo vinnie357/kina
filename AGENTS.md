@@ -1,6 +1,6 @@
 # Agent Instructions
 
-This project uses **bees** for issue tracking. Issues live in `.bees/` (JSONL synced via git, SQLite db local-only).
+This project uses [bees](https://github.com/ctxshift/bees) for issue tracking. Issues live in `.bees/` (JSONL synced via git, SQLite db local-only).
 
 ## Quick Reference
 

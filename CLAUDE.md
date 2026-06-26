@@ -7,7 +7,7 @@
 **Development Phase**: Active development with established project structure, comprehensive tooling, and advanced development practices
 
 ## Task Tracking
-Project tasks are tracked with **bees**, a lightweight SQLite-backed local issue tracker (JSONL synced via git).
+Project tasks are tracked with [bees](https://github.com/ctxshift/bees), a lightweight SQLite-backed local issue tracker (JSONL synced via git).
 See [AGENTS.md](AGENTS.md) for bees workflow, session completion rules, and `bees` commands.
 - Tasks stored in `.bees/` directory (issues.jsonl synced via git, SQLite db local-only)
 - Use `bees ready` to find actionable tasks with no blockers
