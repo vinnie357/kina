@@ -1,0 +1,60 @@
+# RBAC for Traefik's Kubernetes Gateway API provider.
+# Rule set tracks Traefik's official v3.7 reference:
+#   https://github.com/traefik/traefik/blob/v3.7/docs/content/reference/dynamic-configuration/kubernetes-gateway-rbac.yml
+# (renamed to kina's `traefik` ServiceAccount/namespace). The reference's
+# optional `pods: get` rule is omitted: it is only needed for OpenTelemetry
+# pod attribute injection, which this deployment does not enable.
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: traefik
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources:
+  - services
+  - secrets
+  - configmaps
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources:
+  - endpointslices
+  verbs: ["list", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gatewayclasses
+  - gateways
+  - httproutes
+  - grpcroutes
+  - tcproutes
+  - tlsroutes
+  - referencegrants
+  - backendtlspolicies
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources:
+  - gatewayclasses/status
+  - gateways/status
+  - httproutes/status
+  - grpcroutes/status
+  - tcproutes/status
+  - tlsroutes/status
+  - referencegrants/status
+  - backendtlspolicies/status
+  verbs: ["update"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: traefik
+subjects:
+- kind: ServiceAccount
+  name: traefik
+  namespace: traefik
+roleRef:
+  kind: ClusterRole
+  name: traefik
+  apiGroup: rbac.authorization.k8s.io

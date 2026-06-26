@@ -203,6 +203,9 @@ pub enum AddonType {
     /// NGINX Ingress Controller (nginx.org)
     #[value(name = "nginx-ingress")]
     NginxIngress,
+    /// Traefik gateway controller (Gateway API)
+    #[value(name = "traefik")]
+    Traefik,
     /// Demo application (kina-demo-app with ingress)
     #[value(name = "demo-app")]
     DemoApp,
@@ -624,6 +627,9 @@ impl InstallArgs {
             AddonType::NginxIngress => {
                 self.install_nginx_ingress(&cluster_manager).await?;
             }
+            AddonType::Traefik => {
+                self.install_traefik(&cluster_manager).await?;
+            }
             AddonType::DemoApp => {
                 self.install_demo_app(&cluster_manager).await?;
             }
@@ -640,9 +646,21 @@ impl InstallArgs {
     }
 
     async fn install_nginx_ingress(&self, _cluster_manager: &ClusterManager) -> Result<()> {
-        info!("Installing NGINX Ingress Controller (nginx.org) with complete deployment");
-
         let kubeconfig_str = kubeconfig_for(&self.cluster)?;
+
+        // Hard error if the conflicting traefik controller is already installed
+        // (both controllers are DaemonSets that bind host ports 80/443). Checked
+        // before any "Installing…" output so a rejected install reads cleanly.
+        if controller_namespace_present(&kubeconfig_str, "traefik")? {
+            return Err(anyhow::anyhow!(
+                "traefik is already installed on cluster '{}'. \
+                 Only one ingress controller can bind host ports 80/443. \
+                 Remove it before installing nginx-ingress.",
+                self.cluster
+            ));
+        }
+
+        info!("Installing NGINX Ingress Controller (nginx.org) with complete deployment");
 
         // Nginx-ingress manifests embedded in the binary — works from any directory (AC2).
         let manifests: &[(&str, &str)] = &[
@@ -701,6 +719,86 @@ impl InstallArgs {
         Ok(())
     }
 
+    async fn install_traefik(&self, _cluster_manager: &ClusterManager) -> Result<()> {
+        let kubeconfig_str = kubeconfig_for(&self.cluster)?;
+
+        // Hard error if the conflicting nginx controller is already installed
+        // (both controllers are DaemonSets that bind host ports 80/443). Checked
+        // before any "Installing…" output so a rejected install reads cleanly.
+        if controller_namespace_present(&kubeconfig_str, "nginx-ingress")? {
+            return Err(anyhow::anyhow!(
+                "nginx-ingress is already installed on cluster '{}'. \
+                 Only one ingress controller can bind host ports 80/443. \
+                 Remove it before installing traefik.",
+                self.cluster
+            ));
+        }
+
+        info!("Installing Traefik gateway controller (Gateway API) with complete deployment");
+
+        // Apply the Gateway API CRDs first, then BLOCK until they are
+        // Established before applying any custom resource. `kubectl apply` does
+        // not wait for CRD registration, so applying the GatewayClass/Gateway
+        // below could otherwise race the CRDs and fail with "no matches for
+        // kind" on a slow API server.
+        info!("Applying manifest 1/7: Gateway API CRDs");
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/traefik/gateway-api-crds.yaml"),
+            "Gateway API CRDs",
+        )?;
+        wait_for_crds_established(
+            &kubeconfig_str,
+            &[
+                "gatewayclasses.gateway.networking.k8s.io",
+                "gateways.gateway.networking.k8s.io",
+                "httproutes.gateway.networking.k8s.io",
+            ],
+            60,
+        )?;
+
+        // Remaining stack: namespace/SA → RBAC → config → GatewayClass →
+        // DaemonSet → Gateway. The GatewayClass and Gateway are custom
+        // resources of the now-Established CRDs.
+        let manifests: &[(&str, &str)] = &[
+            (
+                include_str!("../../manifests/traefik/ns-and-sa.yaml"),
+                "namespace and ServiceAccount",
+            ),
+            (
+                include_str!("../../manifests/traefik/rbac.yaml"),
+                "RBAC resources",
+            ),
+            (
+                include_str!("../../manifests/traefik/traefik-config.yaml"),
+                "Traefik configuration",
+            ),
+            (
+                include_str!("../../manifests/traefik/gatewayclass.yaml"),
+                "GatewayClass",
+            ),
+            (
+                include_str!("../../manifests/traefik/traefik-daemonset.yaml"),
+                "DaemonSet deployment",
+            ),
+            (
+                include_str!("../../manifests/traefik/gateway.yaml"),
+                "Gateway",
+            ),
+        ];
+
+        for (i, (manifest_content, description)) in manifests.iter().enumerate() {
+            info!("Applying manifest {}/7: {}", i + 2, description);
+            apply_manifest_via_kubectl(&kubeconfig_str, manifest_content, description)?;
+        }
+
+        info!("Traefik gateway controller (DaemonSet) installed successfully");
+        info!("Waiting for traefik pods to start...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+        Ok(())
+    }
+
     async fn install_demo_app(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         info!("Installing demo application to cluster '{}'", self.cluster);
 
@@ -730,6 +828,32 @@ impl InstallArgs {
         );
 
         apply_manifest_via_kubectl(&kubeconfig_str, &rendered, "demo-app manifest")?;
+
+        // Select the routing object by checking whether the Traefik Gateway
+        // this route attaches to actually exists (the HTTPRoute's parentRef is
+        // `traefik/traefik`). Controller-first install order is the documented
+        // flow, so this point-in-time check is correct in normal use. Checking
+        // the Gateway rather than the cluster-scoped CRDs avoids misrouting when
+        // a prior Traefik install was removed but its CRDs linger.
+        let gateway_present = gateway_exists(&kubeconfig_str, "traefik", "traefik")?;
+
+        if gateway_present {
+            info!("Traefik Gateway detected — applying HTTPRoute for demo-app");
+            let route = render_demo_manifest(
+                include_str!("../../manifests/demo-app-route.yaml"),
+                &self.cluster,
+                &dns_domain,
+            );
+            apply_manifest_via_kubectl(&kubeconfig_str, &route, "demo-app HTTPRoute")?;
+        } else {
+            info!("No Traefik Gateway present — applying nginx Ingress for demo-app");
+            let ingress = render_demo_manifest(
+                include_str!("../../manifests/demo-app-ingress.yaml"),
+                &self.cluster,
+                &dns_domain,
+            );
+            apply_manifest_via_kubectl(&kubeconfig_str, &ingress, "demo-app Ingress")?;
+        }
 
         info!("Demo app applied; waiting for pods to be Ready...");
 
@@ -800,6 +924,78 @@ fn kubeconfig_for(cluster: &str) -> Result<String> {
         ));
     }
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// True if the given namespace exists on the cluster — used to detect an
+/// already-installed ingress controller (`nginx-ingress` / `traefik`).
+fn controller_namespace_present(kubeconfig: &str, namespace: &str) -> Result<bool> {
+    let output = std::process::Command::new("kubectl")
+        .args([
+            "--kubeconfig",
+            kubeconfig,
+            "get",
+            "namespace",
+            namespace,
+            "--no-headers",
+        ])
+        .output()
+        .context("Failed to run kubectl get namespace")?;
+    Ok(output.status.success())
+}
+
+/// True if a Gateway API `Gateway` named `name` exists in `namespace`.
+///
+/// Used to decide the demo-app's routing object. This deliberately checks the
+/// concrete Gateway (the HTTPRoute's `parentRef` target) rather than just the
+/// cluster-scoped Gateway API CRDs: CRDs survive a controller uninstall
+/// (namespace deletion does not remove them), so keying off CRD presence alone
+/// could misroute the demo app to a Gateway that no longer exists. When the
+/// CRDs are absent, `kubectl get gateway` exits non-zero ("server doesn't have
+/// a resource type gateways"), which correctly reads as "no Gateway present".
+fn gateway_exists(kubeconfig: &str, name: &str, namespace: &str) -> Result<bool> {
+    let output = std::process::Command::new("kubectl")
+        .args([
+            "--kubeconfig",
+            kubeconfig,
+            "get",
+            "gateway",
+            name,
+            "-n",
+            namespace,
+            "--no-headers",
+        ])
+        .output()
+        .context("Failed to run kubectl get gateway")?;
+    Ok(output.status.success())
+}
+
+/// Block until each named CRD reports the `Established` condition.
+///
+/// `kubectl apply` does not wait for CRD registration, so applying a custom
+/// resource (e.g. a `Gateway`) immediately after its CRD can race and fail with
+/// "no matches for kind". Waiting here makes installs deterministic on slow or
+/// loaded API servers. `crds` are full CRD names (e.g.
+/// `gateways.gateway.networking.k8s.io`).
+fn wait_for_crds_established(kubeconfig: &str, crds: &[&str], timeout_secs: u64) -> Result<()> {
+    let mut args: Vec<String> = vec![
+        "--kubeconfig".into(),
+        kubeconfig.into(),
+        "wait".into(),
+        "--for=condition=established".into(),
+        format!("--timeout={timeout_secs}s"),
+    ];
+    args.extend(crds.iter().map(|crd| format!("crd/{crd}")));
+
+    let status = std::process::Command::new("kubectl")
+        .args(&args)
+        .status()
+        .context("Failed to run kubectl wait for CRD establishment")?;
+    if !status.success() {
+        return Err(anyhow::anyhow!(
+            "Gateway API CRDs did not reach the Established condition within {timeout_secs}s"
+        ));
+    }
+    Ok(())
 }
 
 /// Apply a single manifest by piping it to `kubectl apply -f -`.
@@ -1516,7 +1712,8 @@ impl StatusArgs {
         let ingress_ready = self.check_ingress_ready(&kubeconfig_str).await?;
 
         // Overall readiness assessment
-        let overall_ready = nodes_ready && core_pods_ready && cni_ready && ingress_ready;
+        let overall_ready =
+            nodes_ready && core_pods_ready && cni_ready && ingress_ready.unwrap_or(true);
 
         println!(
             "\n📊 Overall Status: {}",
@@ -1669,55 +1866,45 @@ impl StatusArgs {
         }
     }
 
-    async fn check_ingress_ready(&self, kubeconfig_str: &str) -> Result<bool> {
-        // Check for nginx-ingress pods
-        if let Ok(output) = std::process::Command::new("kubectl")
-            .args([
-                "--kubeconfig",
-                kubeconfig_str,
-                "get",
-                "pods",
-                "-n",
-                "nginx-ingress",
-                "--no-headers",
-            ])
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let lines: Vec<&str> = stdout.lines().collect();
-
-                if lines.is_empty() {
-                    println!("🌍 Ingress Controller: Not found ❌");
-                    return Ok(false);
-                }
-
-                let mut ready_ingress = 0;
-                let total_ingress = lines.len();
-
-                for line in lines {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 3 {
-                        let ready_status = parts[1];
-                        if ready_status.starts_with("1/1") {
-                            ready_ingress += 1;
-                        }
+    /// Returns ingress controller readiness.
+    /// - `Ok(None)`   — no ingress controller installed (optional; not gating).
+    /// - `Ok(Some(b))`— controller present; `b` = all its pods Ready.
+    async fn check_ingress_ready(&self, kubeconfig_str: &str) -> Result<Option<bool>> {
+        // Probe traefik first, then nginx-ingress; whichever has pods wins.
+        for (namespace, label) in [
+            ("traefik", "Gateway (traefik)"),
+            ("nginx-ingress", "Ingress (nginx)"),
+        ] {
+            let output = std::process::Command::new("kubectl")
+                .args([
+                    "--kubeconfig",
+                    kubeconfig_str,
+                    "get",
+                    "pods",
+                    "-n",
+                    namespace,
+                    "--no-headers",
+                ])
+                .output();
+            if let Ok(out) = output {
+                if out.status.success() {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Some((ready, total)) = crate::core::verify::pods_all_ready(&stdout) {
+                        let all_ready = ready == total;
+                        println!(
+                            "🌍 Ingress Controller [{}]: {}/{} Ready {}",
+                            label,
+                            ready,
+                            total,
+                            if all_ready { "✅" } else { "❌" }
+                        );
+                        return Ok(Some(all_ready));
                     }
                 }
-
-                let ingress_ready = ready_ingress == total_ingress;
-                println!(
-                    "🌍 Ingress Controller: {}/{} Ready {}",
-                    ready_ingress,
-                    total_ingress,
-                    if ingress_ready { "✅" } else { "❌" }
-                );
-                return Ok(ingress_ready);
             }
         }
-
-        println!("🌍 Ingress Controller: Unknown ❌");
-        Ok(false)
+        println!("🌍 Ingress Controller: Not installed (optional) ➖");
+        Ok(None)
     }
 }
 
