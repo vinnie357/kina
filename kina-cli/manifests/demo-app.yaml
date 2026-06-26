@@ -195,7 +195,7 @@ data:
                     </div>
                     <div class="info-card">
                         <div class="info-label">Ingress</div>
-                        <div class="info-value">nginx-ingress</div>
+                        <div class="info-value">${CONTROLLER}</div>
                     </div>
                 </div>
             </div>
@@ -226,7 +226,7 @@ data:
                 </div>
                 <div class="feature">
                     <span class="feature-icon">&#x1F310;</span>
-                    <span>NGINX Ingress Controller (nginx.org) installed</span>
+                    <span>Ingress controller installed: ${CONTROLLER}</span>
                 </div>
                 <div class="feature">
                     <span class="feature-icon">&#x1F4E6;</span>

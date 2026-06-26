@@ -9,8 +9,9 @@ use crate::core::cluster::ClusterManager;
 use crate::core::kernel_fetch;
 use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions, NodeRole};
 use crate::core::verify::{
-    aggregate_verify, http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url,
-    render_demo_manifest, ProbeResult,
+    aggregate_verify, classify_ingress_kubectl_result, controller_conflict_message,
+    http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url, render_demo_manifest,
+    select_controller_label, select_demo_route_type, DemoRouteType, IngressReadiness, ProbeResult,
 };
 
 /// Create a new Kubernetes cluster
@@ -651,13 +652,9 @@ impl InstallArgs {
         // Hard error if the conflicting traefik controller is already installed
         // (both controllers are DaemonSets that bind host ports 80/443). Checked
         // before any "Installing…" output so a rejected install reads cleanly.
-        if controller_namespace_present(&kubeconfig_str, "traefik")? {
-            return Err(anyhow::anyhow!(
-                "traefik is already installed on cluster '{}'. \
-                 Only one ingress controller can bind host ports 80/443. \
-                 Remove it before installing nginx-ingress.",
-                self.cluster
-            ));
+        let traefik_present = controller_namespace_present(&kubeconfig_str, "traefik")?;
+        if let Some(msg) = controller_conflict_message("nginx-ingress", traefik_present) {
+            return Err(anyhow::anyhow!("{} (cluster: {})", msg, self.cluster));
         }
 
         info!("Installing NGINX Ingress Controller (nginx.org) with complete deployment");
@@ -711,10 +708,36 @@ impl InstallArgs {
         }
 
         info!("NGINX Ingress Controller (DaemonSet) installed successfully");
-        info!("Waiting for nginx-ingress pods to start...");
+        info!("Waiting for nginx-ingress DaemonSet rollout (bounded, timeout=120s)...");
 
-        // Wait a moment for pods to be created
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        // Block until the DaemonSet is fully rolled out — no fixed sleep.
+        let rollout = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "rollout",
+                "status",
+                "daemonset/nginx-ingress",
+                "-n",
+                "nginx-ingress",
+                "--timeout=120s",
+            ])
+            .status();
+        match rollout {
+            Ok(s) if s.success() => info!("nginx-ingress DaemonSet rollout complete"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "nginx-ingress DaemonSet did not roll out within 120s; the controller is not ready. \
+                     Inspect with: kubectl -n nginx-ingress get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check nginx-ingress DaemonSet rollout status: {}",
+                    e
+                ))
+            }
+        }
 
         Ok(())
     }
@@ -725,13 +748,9 @@ impl InstallArgs {
         // Hard error if the conflicting nginx controller is already installed
         // (both controllers are DaemonSets that bind host ports 80/443). Checked
         // before any "Installing…" output so a rejected install reads cleanly.
-        if controller_namespace_present(&kubeconfig_str, "nginx-ingress")? {
-            return Err(anyhow::anyhow!(
-                "nginx-ingress is already installed on cluster '{}'. \
-                 Only one ingress controller can bind host ports 80/443. \
-                 Remove it before installing traefik.",
-                self.cluster
-            ));
+        let nginx_present = controller_namespace_present(&kubeconfig_str, "nginx-ingress")?;
+        if let Some(msg) = controller_conflict_message("traefik", nginx_present) {
+            return Err(anyhow::anyhow!("{} (cluster: {})", msg, self.cluster));
         }
 
         info!("Installing Traefik gateway controller (Gateway API) with complete deployment");
@@ -793,8 +812,67 @@ impl InstallArgs {
         }
 
         info!("Traefik gateway controller (DaemonSet) installed successfully");
-        info!("Waiting for traefik pods to start...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        info!("Waiting for traefik DaemonSet rollout (bounded, timeout=120s)...");
+
+        // Block until the DaemonSet is fully rolled out — no fixed sleep.
+        let rollout = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "rollout",
+                "status",
+                "daemonset/traefik",
+                "-n",
+                "traefik",
+                "--timeout=120s",
+            ])
+            .status();
+        match rollout {
+            Ok(s) if s.success() => info!("traefik DaemonSet rollout complete"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "traefik DaemonSet did not roll out within 120s; the controller is not ready. \
+                     Inspect with: kubectl -n traefik get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check traefik DaemonSet rollout status: {}",
+                    e
+                ))
+            }
+        }
+
+        info!("Waiting for Traefik Gateway to reach Programmed condition (timeout=60s)...");
+
+        // Wait for the Gateway object to be Programmed so that HTTPRoutes can attach.
+        let gateway_ready = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "wait",
+                "gateway/traefik",
+                "-n",
+                "traefik",
+                "--for=condition=Programmed",
+                "--timeout=60s",
+            ])
+            .status();
+        match gateway_ready {
+            Ok(s) if s.success() => info!("Traefik Gateway is Programmed"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "Traefik Gateway did not reach the Programmed condition within 60s; routes cannot attach. \
+                     Inspect with: kubectl -n traefik get gateway traefik -o wide"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to wait for Traefik Gateway Programmed condition: {}",
+                    e
+                ))
+            }
+        }
 
         Ok(())
     }
@@ -818,41 +896,48 @@ impl InstallArgs {
             }
         };
 
+        // Check gateway presence before rendering so we can substitute the active
+        // controller label into the demo page branding (${CONTROLLER} placeholder).
+        // Controller-first install order is the documented flow, so this
+        // point-in-time check is correct in normal use. Checking the Gateway rather
+        // than the cluster-scoped CRDs avoids misrouting when a prior Traefik install
+        // was removed but its CRDs linger.
+        let gateway_present = gateway_exists(&kubeconfig_str, "traefik", "traefik")?;
+        let controller_label = select_controller_label(gateway_present);
+
         // Demo-app manifest embedded in the binary (AC1).
+        // Substitute cluster name, DNS domain, and active controller label.
         let raw_manifest = include_str!("../../manifests/demo-app.yaml");
         let rendered = render_demo_manifest(raw_manifest, &self.cluster, &dns_domain);
+        let rendered = rendered.replace("${CONTROLLER}", controller_label);
 
         info!(
-            "Applying demo-app manifest (cluster={}, domain={})",
-            self.cluster, dns_domain
+            "Applying demo-app manifest (cluster={}, domain={}, controller={})",
+            self.cluster, dns_domain, controller_label
         );
 
         apply_manifest_via_kubectl(&kubeconfig_str, &rendered, "demo-app manifest")?;
 
-        // Select the routing object by checking whether the Traefik Gateway
-        // this route attaches to actually exists (the HTTPRoute's parentRef is
-        // `traefik/traefik`). Controller-first install order is the documented
-        // flow, so this point-in-time check is correct in normal use. Checking
-        // the Gateway rather than the cluster-scoped CRDs avoids misrouting when
-        // a prior Traefik install was removed but its CRDs linger.
-        let gateway_present = gateway_exists(&kubeconfig_str, "traefik", "traefik")?;
-
-        if gateway_present {
-            info!("Traefik Gateway detected — applying HTTPRoute for demo-app");
-            let route = render_demo_manifest(
-                include_str!("../../manifests/demo-app-route.yaml"),
-                &self.cluster,
-                &dns_domain,
-            );
-            apply_manifest_via_kubectl(&kubeconfig_str, &route, "demo-app HTTPRoute")?;
-        } else {
-            info!("No Traefik Gateway present — applying nginx Ingress for demo-app");
-            let ingress = render_demo_manifest(
-                include_str!("../../manifests/demo-app-ingress.yaml"),
-                &self.cluster,
-                &dns_domain,
-            );
-            apply_manifest_via_kubectl(&kubeconfig_str, &ingress, "demo-app Ingress")?;
+        // Select the routing object based on gateway presence.
+        match select_demo_route_type(gateway_present) {
+            DemoRouteType::HttpRoute => {
+                info!("Traefik Gateway detected — applying HTTPRoute for demo-app");
+                let route = render_demo_manifest(
+                    include_str!("../../manifests/demo-app-route.yaml"),
+                    &self.cluster,
+                    &dns_domain,
+                );
+                apply_manifest_via_kubectl(&kubeconfig_str, &route, "demo-app HTTPRoute")?;
+            }
+            DemoRouteType::NginxIngress => {
+                info!("No Traefik Gateway present — applying nginx Ingress for demo-app");
+                let ingress = render_demo_manifest(
+                    include_str!("../../manifests/demo-app-ingress.yaml"),
+                    &self.cluster,
+                    &dns_domain,
+                );
+                apply_manifest_via_kubectl(&kubeconfig_str, &ingress, "demo-app Ingress")?;
+            }
         }
 
         info!("Demo app applied; waiting for pods to be Ready...");
@@ -1869,8 +1954,11 @@ impl StatusArgs {
     /// Returns ingress controller readiness.
     /// - `Ok(None)`   — no ingress controller installed (optional; not gating).
     /// - `Ok(Some(b))`— controller present; `b` = all its pods Ready.
+    /// - `Err(_)`     — kubectl/API failure that is NOT "namespace not found".
     async fn check_ingress_ready(&self, kubeconfig_str: &str) -> Result<Option<bool>> {
         // Probe traefik first, then nginx-ingress; whichever has pods wins.
+        // classify_ingress_kubectl_result distinguishes API failures (CommandFailure)
+        // from genuine absence (NotInstalled) so connection errors are surfaced.
         for (namespace, label) in [
             ("traefik", "Gateway (traefik)"),
             ("nginx-ingress", "Ingress (nginx)"),
@@ -1886,20 +1974,43 @@ impl StatusArgs {
                     "--no-headers",
                 ])
                 .output();
-            if let Ok(out) = output {
-                if out.status.success() {
+
+            match output {
+                Ok(out) => {
+                    let exit_ok = out.status.success();
                     let stdout = String::from_utf8_lossy(&out.stdout);
-                    if let Some((ready, total)) = crate::core::verify::pods_all_ready(&stdout) {
-                        let all_ready = ready == total;
-                        println!(
-                            "🌍 Ingress Controller [{}]: {}/{} Ready {}",
-                            label,
-                            ready,
-                            total,
-                            if all_ready { "✅" } else { "❌" }
-                        );
-                        return Ok(Some(all_ready));
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    match classify_ingress_kubectl_result(exit_ok, &stdout, &stderr) {
+                        IngressReadiness::NotInstalled => {
+                            // Namespace absent or empty — try the other controller.
+                        }
+                        IngressReadiness::Ready { ready, total } => {
+                            let all_ready = ready == total;
+                            println!(
+                                "🌍 Ingress Controller [{}]: {}/{} Ready {}",
+                                label,
+                                ready,
+                                total,
+                                if all_ready { "✅" } else { "❌" }
+                            );
+                            return Ok(Some(all_ready));
+                        }
+                        IngressReadiness::CommandFailure(msg) => {
+                            return Err(anyhow::anyhow!(
+                                "Ingress controller check failed for namespace '{}': {}",
+                                namespace,
+                                msg
+                            ));
+                        }
                     }
+                }
+                Err(e) => {
+                    // kubectl binary could not be spawned — hard error.
+                    return Err(anyhow::anyhow!(
+                        "Failed to spawn kubectl for namespace '{}': {}",
+                        namespace,
+                        e
+                    ));
                 }
             }
         }
