@@ -3,14 +3,34 @@
 //! All functions in this module are pure (no side effects, no I/O, no subprocess calls).
 //! They are unit-tested in kina-cli/tests/verify_cmd_tests.rs.
 
-/// Substitute `${CLUSTER_NAME}` and `${DNS_DOMAIN}` placeholders in a manifest string.
+/// Substitute manifest placeholders for the demo app.
 ///
-/// Only these two placeholders are substituted at render time; pod-runtime variables
-/// such as `${MY_POD_NAME}` are left untouched for the pod's own envsubst.
-pub fn render_demo_manifest(manifest: &str, cluster: &str, domain: &str) -> String {
+/// Replaced placeholders:
+///   `${CLUSTER_NAME}`    — cluster name
+///   `${DNS_DOMAIN}`      — DNS domain
+///   `${CONTROLLER}`      — active controller label (e.g. "traefik", "nginx-ingress")
+///   `${GATEWAY_NAME}`    — Gateway object name for HTTPRoute parentRef
+///   `${GATEWAY_NAMESPACE}` — Gateway namespace for HTTPRoute parentRef
+///   `${GATEWAY_SECTION}` — Gateway listener sectionName for HTTPRoute parentRef
+///
+/// Pod-runtime variables such as `${MY_POD_NAME}` are left untouched for the
+/// pod's own envsubst.
+pub fn render_demo_manifest(
+    manifest: &str,
+    cluster: &str,
+    domain: &str,
+    controller: &str,
+    gateway_name: &str,
+    gateway_ns: &str,
+    gateway_section: &str,
+) -> String {
     manifest
         .replace("${CLUSTER_NAME}", cluster)
         .replace("${DNS_DOMAIN}", domain)
+        .replace("${CONTROLLER}", controller)
+        .replace("${GATEWAY_NAME}", gateway_name)
+        .replace("${GATEWAY_NAMESPACE}", gateway_ns)
+        .replace("${GATEWAY_SECTION}", gateway_section)
 }
 
 /// Build the Host-header value used when probing a worker node.
@@ -164,19 +184,92 @@ pub fn pods_all_ready(no_headers_stdout: &str) -> Option<(usize, usize)> {
 }
 
 // ===========================================================================
-// kina-34 — controller label
+// kina-32 — ActiveController enum and associated pure helpers
 // ===========================================================================
 
-/// Return the active-controller label string for `${CONTROLLER}` substitution
-/// in demo-app.yaml templates.
-///   gateway_present = true  → "traefik"
-///   gateway_present = false → "nginx-ingress"
-pub fn select_controller_label(gateway_present: bool) -> &'static str {
-    if gateway_present {
-        "traefik"
-    } else {
-        "nginx-ingress"
+/// Active ingress/gateway controller installed in the cluster.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ActiveController {
+    Traefik,
+    NginxGatewayFabric,
+    NginxIngress,
+    None,
+}
+
+/// Label string used in `${CONTROLLER}` substitution and log messages.
+///
+/// - `Traefik`             → `"traefik"`
+/// - `NginxGatewayFabric`  → `"nginx-gateway-fabric"`
+/// - `NginxIngress`        → `"nginx-ingress"`
+/// - `None`                → `"nginx-ingress"` (sensible fallback)
+pub fn controller_label(c: ActiveController) -> &'static str {
+    match c {
+        ActiveController::Traefik => "traefik",
+        ActiveController::NginxGatewayFabric => "nginx-gateway-fabric",
+        ActiveController::NginxIngress | ActiveController::None => "nginx-ingress",
     }
+}
+
+/// Gateway parentRef triple (name, namespace, sectionName); `None` for
+/// non-gateway controllers.
+///
+/// - `Traefik`             → `Some(("traefik",  "traefik",       "web"))`
+/// - `NginxGatewayFabric`  → `Some(("nginx",    "nginx-gateway", "http"))`
+/// - `NginxIngress` / `None` → `None`
+pub fn gateway_parent_ref(
+    c: ActiveController,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    match c {
+        ActiveController::Traefik => Some(("traefik", "traefik", "web")),
+        ActiveController::NginxGatewayFabric => Some(("nginx", "nginx-gateway", "http")),
+        ActiveController::NginxIngress | ActiveController::None => None,
+    }
+}
+
+/// All known controller (id, namespace) pairs.
+///
+/// Note that NGF's id (`"nginx-gateway-fabric"`) differs from its namespace
+/// (`"nginx-gateway"`); this asymmetry is intentional and load-bearing.
+pub fn ingress_controllers() -> [(&'static str, &'static str); 3] {
+    [
+        ("nginx-ingress", "nginx-ingress"),
+        ("traefik", "traefik"),
+        ("nginx-gateway-fabric", "nginx-gateway"),
+    ]
+}
+
+/// Block-guard: `Some(message)` iff any controller id in `present` is different
+/// from `installing`.  Returns `None` when installation is allowed.
+///
+/// The message names all conflicting controllers so the user knows exactly what
+/// to remove.  A controller does NOT block itself (idempotent re-install).
+pub fn controller_conflict_message_multi(installing: &str, present: &[&str]) -> Option<String> {
+    let conflicts: Vec<&str> = present
+        .iter()
+        .filter(|&&id| id != installing)
+        .copied()
+        .collect();
+    if conflicts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Cannot install {}: conflicting ingress controller(s) already installed: {}. \
+         Only one ingress controller can bind host ports 80/443. \
+         Remove it before installing {}.",
+        installing,
+        conflicts.join(", "),
+        installing,
+    ))
+}
+
+/// (namespace, display-label) targets probed by `check_ingress_ready` to detect
+/// installed controllers.
+pub fn ingress_probe_targets() -> [(&'static str, &'static str); 3] {
+    [
+        ("traefik", "Gateway (traefik)"),
+        ("nginx-ingress", "Ingress (nginx)"),
+        ("nginx-gateway", "Gateway (nginx-gateway-fabric)"),
+    ]
 }
 
 // ===========================================================================
@@ -223,59 +316,27 @@ pub fn classify_ingress_kubectl_result(
 }
 
 // ===========================================================================
-// kina-36 — route type selection and conflict guard
+// kina-36 — route type selection
 // ===========================================================================
 
 /// Routing object type to apply for the demo app.
 #[derive(Debug, PartialEq)]
 pub enum DemoRouteType {
-    /// Apply demo-app-route.yaml (HTTPRoute targeting the Traefik Gateway).
+    /// Apply demo-app-route.yaml (HTTPRoute via Gateway API).
     HttpRoute,
-    /// Apply demo-app-ingress.yaml (nginx Ingress).
+    /// Apply demo-app-ingress.yaml (nginx Ingress object).
     NginxIngress,
 }
 
 /// Decide which routing object to apply for the demo app.
-///   gateway_present = true  → HttpRoute
-///   gateway_present = false → NginxIngress
-pub fn select_demo_route_type(gateway_present: bool) -> DemoRouteType {
-    if gateway_present {
-        DemoRouteType::HttpRoute
-    } else {
-        DemoRouteType::NginxIngress
-    }
-}
-
-/// Return `Some(message)` when installing `installing_controller` is blocked
-/// because the conflicting controller's namespace is already present.
-/// Return `None` when installation is allowed.
 ///
-/// installing_controller: "nginx-ingress" or "traefik"
-/// conflicting_ns_present: true = the OTHER controller's namespace exists
-///
-/// When installing "nginx-ingress" and blocked, message must mention "traefik".
-/// When installing "traefik" and blocked, message must mention "nginx-ingress".
-pub fn controller_conflict_message(
-    installing_controller: &str,
-    conflicting_ns_present: bool,
-) -> Option<String> {
-    if !conflicting_ns_present {
-        return None;
-    }
-    let conflicting = match installing_controller {
-        "nginx-ingress" => "traefik",
-        "traefik" => "nginx-ingress",
-        other => {
-            return Some(format!(
-                "A conflicting ingress controller is already installed; \
-                 cannot install {}.",
-                other
-            ))
+/// - `Traefik` / `NginxGatewayFabric` → `HttpRoute` (Gateway API HTTPRoute)
+/// - `NginxIngress` / `None`           → `NginxIngress` (legacy Ingress object)
+pub fn demo_route_type(c: ActiveController) -> DemoRouteType {
+    match c {
+        ActiveController::Traefik | ActiveController::NginxGatewayFabric => {
+            DemoRouteType::HttpRoute
         }
-    };
-    Some(format!(
-        "{} is already installed. Only one ingress controller can bind host \
-         ports 80/443. Remove it before installing {}.",
-        conflicting, installing_controller
-    ))
+        ActiveController::NginxIngress | ActiveController::None => DemoRouteType::NginxIngress,
+    }
 }

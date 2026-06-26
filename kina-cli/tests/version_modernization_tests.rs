@@ -535,7 +535,7 @@ fn e4_rendered_demoapp_keeps_pin() {
         Ok(s) => s,
         Err(e) => panic!("cannot read manifests/demo-app.yaml: {}", e),
     };
-    let rendered = render_demo_manifest(&raw, "kina", "test");
+    let rendered = render_demo_manifest(&raw, "kina", "test", "", "", "", "");
     assert!(
         rendered.contains("nginx:1.30.2-alpine3.23"),
         "render_demo_manifest output must still contain 'nginx:1.30.2-alpine3.23' \
@@ -553,7 +553,7 @@ fn e5_rendered_demoapp_no_floating() {
         Ok(s) => s,
         Err(e) => panic!("cannot read manifests/demo-app.yaml: {}", e),
     };
-    let rendered = render_demo_manifest(&raw, "kina", "test");
+    let rendered = render_demo_manifest(&raw, "kina", "test", "", "", "", "");
     assert!(
         !rendered.contains("nginx:alpine"),
         "render_demo_manifest output must NOT contain 'nginx:alpine' (floating tag); got:\n{}",

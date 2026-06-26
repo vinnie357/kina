@@ -1,0 +1,28 @@
+# NGF v2.6.5 data-plane config: NginxProxy CRD resource
+# Data-plane image digest-pinned: ghcr.io/nginx/nginx-gateway-fabric/nginx:2.6.5@sha256:bc2676fca1b3e24a1f560a22b60fef56e140ac38dfe4b5b4f202a4c9db41e9b9
+# DaemonSet provisioned by NGF controller via NginxProxy spec (daemonSet mode)
+# Service type ClusterIP — traffic enters via hostPorts 80/443 on each node
+apiVersion: gateway.nginx.org/v1alpha2
+kind: NginxProxy
+metadata:
+  labels:
+    app.kubernetes.io/instance: nginx-gateway
+    app.kubernetes.io/name: nginx-gateway
+    app.kubernetes.io/version: 2.6.5
+  name: nginx-gateway-proxy-config
+  namespace: nginx-gateway
+spec:
+  kubernetes:
+    daemonSet:
+      container:
+        image:
+          repository: ghcr.io/nginx/nginx-gateway-fabric/nginx
+          tag: "2.6.5@sha256:bc2676fca1b3e24a1f560a22b60fef56e140ac38dfe4b5b4f202a4c9db41e9b9"
+          pullPolicy: IfNotPresent
+        hostPorts:
+          - containerPort: 80
+            port: 80
+          - containerPort: 443
+            port: 443
+    service:
+      type: ClusterIP

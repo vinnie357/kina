@@ -27,7 +27,7 @@ use kina_cli::core::verify::{
 #[test]
 fn render_substitutes_cluster_name() {
     let fixture = "host: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}";
-    let result = render_demo_manifest(fixture, "kina-test", "test");
+    let result = render_demo_manifest(fixture, "kina-test", "test", "", "", "", "");
     assert!(
         result.contains("kina-test-control-plane.test"),
         "render_demo_manifest must produce \"kina-test-control-plane.test\"; got:\n{}",
@@ -45,7 +45,7 @@ fn render_substitutes_cluster_name() {
 #[test]
 fn render_substitutes_dns_domain() {
     let fixture = "ingress: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}";
-    let result = render_demo_manifest(fixture, "c", "mydomain");
+    let result = render_demo_manifest(fixture, "c", "mydomain", "", "", "", "");
     assert!(
         result.contains("mydomain"),
         "render_demo_manifest must produce output containing \"mydomain\"; got:\n{}",
@@ -63,7 +63,7 @@ fn render_substitutes_dns_domain() {
 #[test]
 fn render_triangulation_distinct_values() {
     let fixture = "host: ${CLUSTER_NAME}-control-plane.${DNS_DOMAIN}";
-    let result = render_demo_manifest(fixture, "alpha", "beta");
+    let result = render_demo_manifest(fixture, "alpha", "beta", "", "", "", "");
     assert!(
         result.contains("alpha-control-plane.beta"),
         "render_demo_manifest(fixture, \"alpha\", \"beta\") must produce \
@@ -83,7 +83,7 @@ fn render_triangulation_distinct_values() {
 #[test]
 fn render_leaves_pod_runtime_vars_untouched() {
     let fixture = "x ${MY_POD_NAME} ${CLUSTER_NAME}";
-    let result = render_demo_manifest(fixture, "c", "d");
+    let result = render_demo_manifest(fixture, "c", "d", "", "", "", "");
     assert!(
         result.contains("${MY_POD_NAME}"),
         "render_demo_manifest must leave \"${{MY_POD_NAME}}\" as a literal — pod runtime vars \
@@ -101,7 +101,7 @@ fn render_leaves_pod_runtime_vars_untouched() {
 #[test]
 fn render_substitutes_all_occurrences() {
     let fixture = "name: ${CLUSTER_NAME}\nother: ${CLUSTER_NAME}";
-    let result = render_demo_manifest(fixture, "mycluster", "test");
+    let result = render_demo_manifest(fixture, "mycluster", "test", "", "", "", "");
     assert!(
         !result.contains("${CLUSTER_NAME}"),
         "render_demo_manifest must replace ALL occurrences of \"${{CLUSTER_NAME}}\" (global replace, \

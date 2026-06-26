@@ -9,9 +9,10 @@ use crate::core::cluster::ClusterManager;
 use crate::core::kernel_fetch;
 use crate::core::types::{ClusterInfo, CreateClusterOptions, LoadImageOptions, NodeRole};
 use crate::core::verify::{
-    aggregate_verify, classify_ingress_kubectl_result, controller_conflict_message,
-    http_layer_pass, parse_dns_domain, probe_host, probe_passed, probe_url, render_demo_manifest,
-    select_controller_label, select_demo_route_type, DemoRouteType, IngressReadiness, ProbeResult,
+    aggregate_verify, classify_ingress_kubectl_result, controller_conflict_message_multi,
+    controller_label, demo_route_type, gateway_parent_ref, http_layer_pass, ingress_probe_targets,
+    parse_dns_domain, probe_host, probe_passed, probe_url, render_demo_manifest, ActiveController,
+    DemoRouteType, IngressReadiness, ProbeResult,
 };
 
 /// Create a new Kubernetes cluster
@@ -207,6 +208,9 @@ pub enum AddonType {
     /// Traefik gateway controller (Gateway API)
     #[value(name = "traefik")]
     Traefik,
+    /// NGINX Gateway Fabric (Gateway API, gateway.nginx.org)
+    #[value(name = "nginx-gateway-fabric")]
+    NginxGatewayFabric,
     /// Demo application (kina-demo-app with ingress)
     #[value(name = "demo-app")]
     DemoApp,
@@ -631,6 +635,9 @@ impl InstallArgs {
             AddonType::Traefik => {
                 self.install_traefik(&cluster_manager).await?;
             }
+            AddonType::NginxGatewayFabric => {
+                self.install_nginx_gateway_fabric(&cluster_manager).await?;
+            }
             AddonType::DemoApp => {
                 self.install_demo_app(&cluster_manager).await?;
             }
@@ -649,11 +656,11 @@ impl InstallArgs {
     async fn install_nginx_ingress(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         let kubeconfig_str = kubeconfig_for(&self.cluster)?;
 
-        // Hard error if the conflicting traefik controller is already installed
-        // (both controllers are DaemonSets that bind host ports 80/443). Checked
+        // Hard error if any conflicting controller is already installed
+        // (all controllers are DaemonSets that bind host ports 80/443). Checked
         // before any "Installing…" output so a rejected install reads cleanly.
-        let traefik_present = controller_namespace_present(&kubeconfig_str, "traefik")?;
-        if let Some(msg) = controller_conflict_message("nginx-ingress", traefik_present) {
+        let present = present_controller_ids(&kubeconfig_str)?;
+        if let Some(msg) = controller_conflict_message_multi("nginx-ingress", &present) {
             return Err(anyhow::anyhow!("{} (cluster: {})", msg, self.cluster));
         }
 
@@ -745,11 +752,11 @@ impl InstallArgs {
     async fn install_traefik(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         let kubeconfig_str = kubeconfig_for(&self.cluster)?;
 
-        // Hard error if the conflicting nginx controller is already installed
-        // (both controllers are DaemonSets that bind host ports 80/443). Checked
+        // Hard error if any conflicting controller is already installed
+        // (all controllers are DaemonSets that bind host ports 80/443). Checked
         // before any "Installing…" output so a rejected install reads cleanly.
-        let nginx_present = controller_namespace_present(&kubeconfig_str, "nginx-ingress")?;
-        if let Some(msg) = controller_conflict_message("traefik", nginx_present) {
+        let present = present_controller_ids(&kubeconfig_str)?;
+        if let Some(msg) = controller_conflict_message_multi("traefik", &present) {
             return Err(anyhow::anyhow!("{} (cluster: {})", msg, self.cluster));
         }
 
@@ -877,6 +884,197 @@ impl InstallArgs {
         Ok(())
     }
 
+    async fn install_nginx_gateway_fabric(&self, _cluster_manager: &ClusterManager) -> Result<()> {
+        let kubeconfig_str = kubeconfig_for(&self.cluster)?;
+
+        // Hard error if any conflicting controller is already installed.
+        let present = present_controller_ids(&kubeconfig_str)?;
+        if let Some(msg) = controller_conflict_message_multi("nginx-gateway-fabric", &present) {
+            return Err(anyhow::anyhow!("{} (cluster: {})", msg, self.cluster));
+        }
+
+        info!("Installing NGINX Gateway Fabric (Gateway API) with complete deployment");
+
+        // 1. Shared Gateway API CRDs (reused from traefik manifests — v1.5.1, compatible).
+        info!("Applying shared Gateway API CRDs (v1.5.1)");
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/traefik/gateway-api-crds.yaml"),
+            "Gateway API CRDs (shared)",
+        )?;
+        wait_for_crds_established(
+            &kubeconfig_str,
+            &[
+                "gatewayclasses.gateway.networking.k8s.io",
+                "gateways.gateway.networking.k8s.io",
+                "httproutes.gateway.networking.k8s.io",
+            ],
+            60,
+        )?;
+
+        // 2. NGF-specific CRDs (gateway.nginx.org group) — server-side apply for large schemas.
+        info!("Applying NGF CRDs (gateway.nginx.org, server-side)");
+        apply_manifest_server_side(
+            &kubeconfig_str,
+            include_str!("../../manifests/nginx-gateway-fabric/ngf-crds.yaml"),
+            "NGF CRDs (gateway.nginx.org)",
+        )?;
+        wait_for_crds_established(
+            &kubeconfig_str,
+            &[
+                "nginxproxies.gateway.nginx.org",
+                "nginxgateways.gateway.nginx.org",
+            ],
+            60,
+        )?;
+
+        // 3. NGF control-plane: Namespace, RBAC, Deployment, cert-generator Job, GatewayClass,
+        //    NginxGateway config.
+        info!("Applying NGF control-plane (deploy.yaml)");
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/nginx-gateway-fabric/deploy.yaml"),
+            "NGF control-plane",
+        )?;
+
+        // 4. Wait for cert-generator Job to complete before the control-plane can start
+        //    (it generates the agent-tls secret the Deployment mounts).
+        info!("Waiting for cert-generator Job to complete (timeout=120s)...");
+        let job_done = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "wait",
+                "job/nginx-gateway-cert-generator",
+                "-n",
+                "nginx-gateway",
+                "--for=condition=Complete",
+                "--timeout=120s",
+            ])
+            .status();
+        match job_done {
+            Ok(s) if s.success() => info!("cert-generator Job complete"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "nginx-gateway-cert-generator Job did not complete within 120s. \
+                     Inspect with: kubectl -n nginx-gateway describe job nginx-gateway-cert-generator"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to wait for cert-generator Job: {}",
+                    e
+                ))
+            }
+        }
+
+        // 5. Wait for control-plane Deployment rollout.
+        info!("Waiting for nginx-gateway control-plane Deployment rollout (timeout=120s)...");
+        let rollout = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "rollout",
+                "status",
+                "deployment/nginx-gateway",
+                "-n",
+                "nginx-gateway",
+                "--timeout=120s",
+            ])
+            .status();
+        match rollout {
+            Ok(s) if s.success() => info!("nginx-gateway Deployment rollout complete"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "nginx-gateway Deployment did not roll out within 120s; the control-plane \
+                     is not ready. Inspect with: kubectl -n nginx-gateway get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check nginx-gateway Deployment rollout status: {}",
+                    e
+                ))
+            }
+        }
+
+        // 6. Apply NginxProxy CRD resource (DaemonSet config) + Gateway object.
+        info!("Applying NginxProxy config and Gateway object");
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/nginx-gateway-fabric/nginxproxy.yaml"),
+            "NginxProxy config",
+        )?;
+        apply_manifest_via_kubectl(
+            &kubeconfig_str,
+            include_str!("../../manifests/nginx-gateway-fabric/gateway.yaml"),
+            "Gateway (nginx)",
+        )?;
+
+        // 7. Wait for Gateway to reach Programmed condition (routes can attach only after this).
+        info!("Waiting for nginx Gateway to reach Programmed condition (timeout=60s)...");
+        let gw_ready = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "wait",
+                "gateway/nginx",
+                "-n",
+                "nginx-gateway",
+                "--for=condition=Programmed",
+                "--timeout=60s",
+            ])
+            .status();
+        match gw_ready {
+            Ok(s) if s.success() => info!("Gateway nginx is Programmed"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "Gateway nginx did not reach the Programmed condition within 60s; routes \
+                     cannot attach. Inspect with: kubectl -n nginx-gateway get gateway nginx -o wide"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to wait for Gateway nginx Programmed condition: {}",
+                    e
+                ))
+            }
+        }
+
+        // 8. Wait for the provisioned data-plane DaemonSet to roll out.
+        //    The NGF controller names the DaemonSet "nginx-<gateway-name>" = "nginx-nginx".
+        info!("Waiting for nginx-nginx data-plane DaemonSet rollout (timeout=120s)...");
+        let ds_rollout = std::process::Command::new("kubectl")
+            .args([
+                "--kubeconfig",
+                &kubeconfig_str,
+                "rollout",
+                "status",
+                "daemonset/nginx-nginx",
+                "-n",
+                "nginx-gateway",
+                "--timeout=120s",
+            ])
+            .status();
+        match ds_rollout {
+            Ok(s) if s.success() => info!("nginx-nginx DaemonSet rollout complete"),
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "nginx-nginx DaemonSet did not roll out within 120s; the data-plane \
+                     is not ready. Inspect with: kubectl -n nginx-gateway get pods"
+                ))
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to check nginx-nginx DaemonSet rollout status: {}",
+                    e
+                ))
+            }
+        }
+
+        Ok(())
+    }
+
     async fn install_demo_app(&self, _cluster_manager: &ClusterManager) -> Result<()> {
         info!("Installing demo application to cluster '{}'", self.cluster);
 
@@ -896,45 +1094,74 @@ impl InstallArgs {
             }
         };
 
-        // Check gateway presence before rendering so we can substitute the active
-        // controller label into the demo page branding (${CONTROLLER} placeholder).
-        // Controller-first install order is the documented flow, so this
-        // point-in-time check is correct in normal use. Checking the Gateway rather
-        // than the cluster-scoped CRDs avoids misrouting when a prior Traefik install
-        // was removed but its CRDs linger.
-        let gateway_present = gateway_exists(&kubeconfig_str, "traefik", "traefik")?;
-        let controller_label = select_controller_label(gateway_present);
+        // Detect which gateway controller is active. Check concrete Gateway objects
+        // rather than CRDs so a stale uninstall (CRDs linger but no Gateway object)
+        // doesn't misroute the demo app.
+        let active_controller = if gateway_exists(&kubeconfig_str, "traefik", "traefik")? {
+            ActiveController::Traefik
+        } else if gateway_exists(&kubeconfig_str, "nginx", "nginx-gateway")? {
+            ActiveController::NginxGatewayFabric
+        } else if controller_namespace_present(&kubeconfig_str, "nginx-ingress")? {
+            ActiveController::NginxIngress
+        } else {
+            ActiveController::None
+        };
+
+        // Resolve gateway parentRef triple (name, namespace, sectionName).
+        // For non-gateway controllers this is ("", "", "") — placeholders unused.
+        let (gw_name, gw_ns, gw_section) =
+            gateway_parent_ref(active_controller).unwrap_or(("", "", ""));
+
+        let active_label = controller_label(active_controller);
 
         // Demo-app manifest embedded in the binary (AC1).
-        // Substitute cluster name, DNS domain, and active controller label.
+        // Substitute cluster name, DNS domain, controller label, and gateway parentRef.
         let raw_manifest = include_str!("../../manifests/demo-app.yaml");
-        let rendered = render_demo_manifest(raw_manifest, &self.cluster, &dns_domain);
-        let rendered = rendered.replace("${CONTROLLER}", controller_label);
+        let rendered = render_demo_manifest(
+            raw_manifest,
+            &self.cluster,
+            &dns_domain,
+            active_label,
+            gw_name,
+            gw_ns,
+            gw_section,
+        );
 
         info!(
             "Applying demo-app manifest (cluster={}, domain={}, controller={})",
-            self.cluster, dns_domain, controller_label
+            self.cluster, dns_domain, active_label
         );
 
         apply_manifest_via_kubectl(&kubeconfig_str, &rendered, "demo-app manifest")?;
 
-        // Select the routing object based on gateway presence.
-        match select_demo_route_type(gateway_present) {
+        // Select the routing object based on active controller.
+        match demo_route_type(active_controller) {
             DemoRouteType::HttpRoute => {
-                info!("Traefik Gateway detected — applying HTTPRoute for demo-app");
+                info!(
+                    "{} Gateway detected — applying HTTPRoute for demo-app",
+                    active_label
+                );
                 let route = render_demo_manifest(
                     include_str!("../../manifests/demo-app-route.yaml"),
                     &self.cluster,
                     &dns_domain,
+                    active_label,
+                    gw_name,
+                    gw_ns,
+                    gw_section,
                 );
                 apply_manifest_via_kubectl(&kubeconfig_str, &route, "demo-app HTTPRoute")?;
             }
             DemoRouteType::NginxIngress => {
-                info!("No Traefik Gateway present — applying nginx Ingress for demo-app");
+                info!("No Gateway controller present — applying nginx Ingress for demo-app");
                 let ingress = render_demo_manifest(
                     include_str!("../../manifests/demo-app-ingress.yaml"),
                     &self.cluster,
                     &dns_domain,
+                    active_label,
+                    "",
+                    "",
+                    "",
                 );
                 apply_manifest_via_kubectl(&kubeconfig_str, &ingress, "demo-app Ingress")?;
             }
@@ -1009,6 +1236,23 @@ fn kubeconfig_for(cluster: &str) -> Result<String> {
         ));
     }
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// Return the controller IDs (from [`ingress_controllers`]) whose namespaces
+/// currently exist in the cluster.
+///
+/// Uses [`controller_namespace_present`] for each known controller's namespace
+/// so the check is derived from the single authoritative registry, not hardcoded
+/// in each install function.
+fn present_controller_ids(kubeconfig: &str) -> Result<Vec<&'static str>> {
+    use crate::core::verify::ingress_controllers;
+    let mut present = Vec::new();
+    for (id, namespace) in ingress_controllers() {
+        if controller_namespace_present(kubeconfig, namespace)? {
+            present.push(id);
+        }
+    }
+    Ok(present)
 }
 
 /// True if the given namespace exists on the cluster — used to detect an
@@ -1115,6 +1359,59 @@ fn apply_manifest_via_kubectl(kubeconfig: &str, manifest: &str, description: &st
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         // Some resources might already exist or have expected warnings.
+        if stderr.contains("already exists") || stderr.contains("Warning") {
+            info!("Applied {} (with warnings/already exists)", description);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Failed to apply {}: {}\nStdout: {}",
+                description,
+                stderr,
+                stdout
+            ));
+        }
+    } else {
+        info!("Successfully applied {}", description);
+    }
+
+    Ok(())
+}
+
+/// Apply a single manifest using `kubectl apply --server-side -f -`.
+///
+/// Server-side apply is required for large manifests (e.g. NGF CRDs) whose
+/// annotation size would exceed the `last-applied-configuration` limit of
+/// client-side apply.  Error semantics are the same as [`apply_manifest_via_kubectl`].
+fn apply_manifest_server_side(kubeconfig: &str, manifest: &str, description: &str) -> Result<()> {
+    let mut child = std::process::Command::new("kubectl")
+        .args([
+            "--kubeconfig",
+            kubeconfig,
+            "apply",
+            "--server-side",
+            "-f",
+            "-",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context(format!("Failed to spawn kubectl for: {}", description))?;
+
+    if let Some(stdin) = child.stdin.take() {
+        let mut stdin = stdin;
+        use std::io::Write as _;
+        stdin
+            .write_all(manifest.as_bytes())
+            .context("Failed to write manifest to kubectl stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .context(format!("Failed to wait for kubectl: {}", description))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
         if stderr.contains("already exists") || stderr.contains("Warning") {
             info!("Applied {} (with warnings/already exists)", description);
         } else {
@@ -1956,13 +2253,10 @@ impl StatusArgs {
     /// - `Ok(Some(b))`— controller present; `b` = all its pods Ready.
     /// - `Err(_)`     — kubectl/API failure that is NOT "namespace not found".
     async fn check_ingress_ready(&self, kubeconfig_str: &str) -> Result<Option<bool>> {
-        // Probe traefik first, then nginx-ingress; whichever has pods wins.
+        // Probe each known controller namespace; whichever has pods wins.
         // classify_ingress_kubectl_result distinguishes API failures (CommandFailure)
         // from genuine absence (NotInstalled) so connection errors are surfaced.
-        for (namespace, label) in [
-            ("traefik", "Gateway (traefik)"),
-            ("nginx-ingress", "Ingress (nginx)"),
-        ] {
+        for (namespace, label) in ingress_probe_targets() {
             let output = std::process::Command::new("kubectl")
                 .args([
                     "--kubeconfig",
