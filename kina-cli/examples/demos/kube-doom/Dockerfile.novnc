@@ -1,0 +1,28 @@
+# Dockerfile for noVNC + websockify — arm64
+#
+# Builds a minimal noVNC image that proxies VNC-over-WebSocket.
+# Used as the sidecar in the kube-doom pod to make VNC accessible via browser.
+#
+# The kubedoom container exposes VNC on port 5900 (localhost inside the pod).
+# This sidecar connects to :5900 and provides a WebSocket server on :6080.
+#
+# Build:
+#   container build -t novnc-websockify:arm64 -f Dockerfile.novnc .
+#
+# Reference: https://github.com/novnc/noVNC
+
+FROM --platform=linux/arm64 python:3.12-alpine
+
+RUN apk add --no-cache git && \
+    pip install --no-cache-dir websockify
+
+# Clone noVNC static assets
+RUN git clone --depth 1 https://github.com/novnc/noVNC.git /novnc && \
+    rm -rf /novnc/.git
+
+WORKDIR /novnc
+
+EXPOSE 6080
+
+# websockify bridges WebSocket (6080) to VNC (localhost:5900)
+CMD ["python", "-m", "websockify", "--web", "/novnc", "6080", "localhost:5900"]

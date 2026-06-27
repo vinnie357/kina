@@ -1,0 +1,133 @@
+# kube-doom — Gateway API variant (HTTPRoute)
+#
+# WARNING: DESTRUCTIVE — kills real pods. Deploy in a dedicated demo cluster only.
+# WARNING: CVE-2025-10202 — broad pod-delete RBAC. See README.md for details.
+#
+# Requires custom arm64 images — see README.md for build instructions.
+#
+# Replace image placeholders before applying:
+#   REGISTRY/pi-kube-doom:arm64      -> your arm64 kube-doom image
+#   REGISTRY/novnc-websockify:arm64  -> your arm64 novnc image
+#
+# Deploy (with substitutions):
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#   sed "s|REGISTRY/pi-kube-doom:arm64|<reg>/pi-kube-doom:arm64|g; \
+#        s|REGISTRY/novnc-websockify:arm64|<reg>/novnc-websockify:arm64|g; \
+#        s/<NODE_IP>/$NODE_IP/g" gatewayapi.yaml | kubectl apply -f -
+#
+# Access:
+#   http://doom-killer.<NODE_IP>.nip.io
+#
+# Teardown (including cluster-scoped RBAC):
+#   kubectl delete namespace kubedoom
+#   kubectl delete clusterrole kubedoom-pods
+#   kubectl delete clusterrolebinding kubedoom-pods
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubedoom
+
+---
+# ServiceAccount used by the kubedoom pod to call the Kubernetes API
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+
+---
+# ClusterRole: grants cluster-wide pod list/get/watch/delete.
+# This is intentionally broad — it's how kubedoom sees pods across all namespaces.
+# CVE-2025-10202: scope this to specific namespaces if you want to limit blast radius.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubedoom-pods
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list", "get", "watch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubedoom-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubedoom-pods
+subjects:
+- kind: ServiceAccount
+  name: kubedoom
+  namespace: kubedoom
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+  labels:
+    app: kubedoom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubedoom
+  template:
+    metadata:
+      labels:
+        app: kubedoom
+    spec:
+      serviceAccountName: kubedoom
+      containers:
+      # kubedoom: runs Doom; each monster = a pod; shooting = kubectl delete pod
+      - name: kubedoom
+        image: REGISTRY/pi-kube-doom:arm64
+        imagePullPolicy: Always
+        ports:
+        - name: vnc
+          containerPort: 5900
+      # noVNC sidecar: proxies VNC (5900) over WebSocket (6080) for browser access
+      - name: novnc
+        image: REGISTRY/novnc-websockify:arm64
+        imagePullPolicy: Always
+        ports:
+        - name: novnc
+          containerPort: 6080
+
+---
+# Service routes port 80 to the noVNC sidecar's WebSocket server on 6080.
+# ClusterIP only — do not change to NodePort/LoadBalancer (security risk).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubedoom-web
+  namespace: kubedoom
+spec:
+  selector:
+    app: kubedoom
+  ports:
+  - port: 80
+    targetPort: 6080
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  hostnames:
+  - "doom-killer.<NODE_IP>.nip.io"
+  rules:
+  - backendRefs:
+    - name: kubedoom-web
+      port: 80

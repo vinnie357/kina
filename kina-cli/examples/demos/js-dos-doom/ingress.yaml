@@ -1,0 +1,81 @@
+# js-dos Doom — nginx-ingress variant (Ingress)
+#
+# Serves the Doom browser game via a standard Kubernetes Ingress.
+# Requires a custom arm64 image — see README.md for build instructions.
+#
+# Replace REGISTRY/doom-game:arm64 with your actual image reference before applying.
+#
+# Deploy (with substitutions):
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#   sed "s|REGISTRY/doom-game:arm64|<your-registry>/doom-game:arm64|g; s/<NODE_IP>/$NODE_IP/g" \
+#       ingress.yaml | kubectl apply -f -
+#
+# Access:
+#   http://doom-game.<NODE_IP>.nip.io
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doom-game
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doom-game
+  namespace: doom-game
+  labels:
+    app: doom-game
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doom-game
+  template:
+    metadata:
+      labels:
+        app: doom-game
+    spec:
+      containers:
+      - name: doom-game
+        # Replace with your actual arm64 image after building with the Dockerfile
+        image: REGISTRY/doom-game:arm64
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doom-game
+  namespace: doom-game
+spec:
+  selector:
+    app: doom-game
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: doom-game
+  namespace: doom-game
+  annotations:
+    nginx.org/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "doom-game.<NODE_IP>.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: doom-game
+            port:
+              number: 80
