@@ -1,0 +1,115 @@
+# TCP Routing with Gateway API (TCPRoute)
+#
+# Demonstrates: L4 TCP passthrough via TCPRoute (experimental Gateway API).
+# The Gateway must have a TCP listener, NGF must be started with
+# --gateway-api-experimental-features, and the extra RBAC from kina-43 applied.
+# See README.md for the full prerequisites.
+#
+# This example uses a simple echo server to demonstrate the TCP connection.
+# A client connecting to <NODE_IP>:9000 will get an echo of what it sends.
+#
+# Prerequisites:
+#   See README.md — experimental CRDs + kina-43 RBAC + tcp listener on port 9000
+#
+# Deploy:
+#   kubectl apply -f tcp-route.yaml
+#
+# Test (from your Mac):
+#   echo "hello TCP" | nc <NODE_IP> 9000
+#   # Expected: echoes "hello TCP" back
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tcp-example
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tcp-echo
+  namespace: tcp-example
+  labels:
+    app: tcp-echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tcp-echo
+  template:
+    metadata:
+      labels:
+        app: tcp-echo
+    spec:
+      containers:
+      # socat in TCP echo mode: echos every received byte back to the sender
+      - name: echo
+        image: alpine:3.20
+        command:
+        - /bin/sh
+        - -c
+        - |
+          apk add --no-cache socat 2>/dev/null
+          socat TCP-LISTEN:7000,fork EXEC:cat
+        ports:
+        - containerPort: 7000
+          protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tcp-echo
+  namespace: tcp-example
+spec:
+  selector:
+    app: tcp-echo
+  ports:
+  - name: echo
+    port: 7000
+    targetPort: 7000
+    protocol: TCP
+
+---
+# TCPRoute (experimental Gateway API resource).
+# parentRef.sectionName must match the Gateway listener name for the TCP port.
+# Adjust port/sectionName to match your Gateway's TCP listener.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: tcp-echo
+  namespace: tcp-example
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    # "sectionName" must match the Gateway listener that owns this TCP port.
+    # Rename tcp-example-port in your Gateway patch below.
+    sectionName: tcp-example-port
+  rules:
+  - backendRefs:
+    - name: tcp-echo
+      port: 7000
+
+# NOTE: Before applying, add a TCP listener to the Gateway:
+#
+#   kubectl patch gateway nginx -n nginx-gateway --type=json -p '[
+#     {"op":"add","path":"/spec/listeners/-","value":{
+#       "name":"tcp-example-port",
+#       "port":9000,
+#       "protocol":"TCP",
+#       "allowedRoutes":{
+#         "namespaces":{"from":"All"},
+#         "kinds":[{"group":"gateway.networking.k8s.io","kind":"TCPRoute"}]
+#       }
+#     }}
+#   ]'
+#
+# And expose port 9000 via NginxProxy hostPorts:
+#
+#   kubectl patch nginxproxy nginx-gateway-proxy-config -n nginx-gateway \
+#     --type=json -p '[
+#       {"op":"add","path":"/spec/kubernetes/daemonSet/container/hostPorts/-",
+#        "value":{"containerPort":9000,"port":9000}}
+#     ]'

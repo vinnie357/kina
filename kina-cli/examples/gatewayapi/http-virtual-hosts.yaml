@@ -1,0 +1,162 @@
+# Virtual Hosts with Gateway API
+#
+# Demonstrates: Two apps on different hostnames sharing one Gateway listener.
+# The HTTPRoute hostname field is the host-based routing discriminator —
+# no separate Ingress class annotation needed.
+#
+# Prerequisites:
+#   kina install nginx-gateway-fabric --cluster <cluster>
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#
+# Deploy:
+#   sed "s/<NODE_IP>/$NODE_IP/g" http-virtual-hosts.yaml | kubectl apply -f -
+#
+# Test:
+#   curl http://app-a.<NODE_IP>.nip.io   # -> "App A"
+#   curl http://app-b.<NODE_IP>.nip.io   # -> "App B"
+
+---
+# App A
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-a
+  namespace: default
+  labels:
+    app: app-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-a
+  template:
+    metadata:
+      labels:
+        app: app-a
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: app-a-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-a-content
+  namespace: default
+data:
+  index.html: |
+    <html><body><h1>App A</h1><p>Served via app-a.<NODE_IP>.nip.io</p></body></html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-a
+  namespace: default
+spec:
+  selector:
+    app: app-a
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-a
+  namespace: default
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  hostnames:
+  - "app-a.<NODE_IP>.nip.io"
+  rules:
+  - backendRefs:
+    - name: app-a
+      port: 80
+
+---
+# App B
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-b
+  namespace: default
+  labels:
+    app: app-b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app-b
+  template:
+    metadata:
+      labels:
+        app: app-b
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: app-b-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-b-content
+  namespace: default
+data:
+  index.html: |
+    <html><body><h1>App B</h1><p>Served via app-b.<NODE_IP>.nip.io</p></body></html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-b
+  namespace: default
+spec:
+  selector:
+    app: app-b
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-b
+  namespace: default
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  hostnames:
+  - "app-b.<NODE_IP>.nip.io"
+  rules:
+  - backendRefs:
+    - name: app-b
+      port: 80

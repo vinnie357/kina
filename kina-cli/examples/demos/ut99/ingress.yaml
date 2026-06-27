@@ -1,0 +1,113 @@
+# UT99 — nginx-ingress variant (TransportServer UDP)
+#
+# Standard Kubernetes Ingress only supports HTTP/HTTPS. For UDP (UT99),
+# the NGINX Ingress Controller (nginx.org/v1) uses a TransportServer resource
+# with protocol: UDP.
+#
+# Requires: kina install nginx-ingress --cluster <cluster>
+#
+# Deploy:
+#   kubectl apply -f ingress.yaml
+#
+# Connect:
+#   UT99 client -> open <NODE_IP>:7777
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: games
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ut99
+  namespace: games
+  labels:
+    app: ut99
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ut99
+  template:
+    metadata:
+      labels:
+        app: ut99
+    spec:
+      containers:
+      - name: ut99
+        image: phasecorex/ut99-server:latest
+        command:
+        - /bin/bash
+        - -c
+        - |
+          apt-get update -q && \
+          apt-get install -y --no-install-recommends libsdl2-2.0-0 libasound2t64 && \
+          exec /app/start_server.sh
+        ports:
+        - containerPort: 7777
+          protocol: UDP
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        volumeMounts:
+        - mountPath: /data
+          name: data
+      volumes:
+      - name: data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ut99
+  namespace: games
+spec:
+  selector:
+    app: ut99
+  ports:
+  - name: game
+    port: 7777
+    protocol: UDP
+    targetPort: 7777
+
+---
+# TransportServer (nginx.org/v1) with UDP protocol.
+# Requires a GlobalConfiguration listener for UDP 7777.
+apiVersion: k8s.nginx.org/v1
+kind: TransportServer
+metadata:
+  name: ut99
+  namespace: games
+spec:
+  listener:
+    name: game-udp
+    protocol: UDP
+  upstreams:
+  - name: ut99-upstream
+    service: ut99
+    port: 7777
+  action:
+    pass: ut99-upstream
+
+# NOTE: Create a GlobalConfiguration with a UDP listener on port 7777:
+#
+#   kubectl apply -f - <<'EOF'
+#   apiVersion: k8s.nginx.org/v1
+#   kind: GlobalConfiguration
+#   metadata:
+#     name: nginx-configuration
+#     namespace: nginx-ingress
+#   spec:
+#     listeners:
+#     - name: game-udp
+#       port: 7777
+#       protocol: UDP
+#   EOF

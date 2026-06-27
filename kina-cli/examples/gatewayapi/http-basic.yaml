@@ -1,0 +1,101 @@
+# Basic HTTP Routing with Gateway API
+#
+# Demonstrates: Deployment + Service + HTTPRoute
+#
+# Prerequisites:
+#   kina install nginx-gateway-fabric --cluster <cluster>
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#
+# Deploy:
+#   sed "s/<NODE_IP>/$NODE_IP/g" http-basic.yaml | kubectl apply -f -
+#
+# Test:
+#   curl http://hello.<NODE_IP>.nip.io
+#   # Expected: 200 with HTML body containing "Hello from Gateway API"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-web
+  namespace: default
+  labels:
+    app: hello-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-web
+  template:
+    metadata:
+      labels:
+        app: hello-web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: hello-web-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-web-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head><title>Hello from Gateway API</title></head>
+    <body>
+      <h1>Hello from Gateway API</h1>
+      <p>HTTPRoute via NGINX Gateway Fabric is working.</p>
+    </body>
+    </html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-web
+  namespace: default
+spec:
+  selector:
+    app: hello-web
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hello-web
+  namespace: default
+spec:
+  # References the NGF Gateway in nginx-gateway namespace.
+  # sectionName must match the listener name ("http" for port 80).
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  # nip.io hostname — resolves to the node IP without /etc/hosts
+  hostnames:
+  - "hello.<NODE_IP>.nip.io"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: hello-web
+      port: 80
