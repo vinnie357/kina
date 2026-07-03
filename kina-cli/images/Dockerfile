@@ -2,7 +2,7 @@
 # Custom Debian-based image for Apple Container VMs with full kernel support
 # Replaces kindest/node with proper VM-compatible image for Cilium CNI
 
-FROM debian:13-slim@sha256:4e401d95de7083948053197a9c3913343cd06b706bf15eb6a0c3ccd26f436a0e
+FROM debian:13-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 
 ARG CNI_PLUGINS_VERSION=1.9.1
 ARG CNI_PLUGINS_SHA256SUM=56171987d3947707c3563db2f4001bccaf50fd63468611b9f3cbecb1375ee7ec
