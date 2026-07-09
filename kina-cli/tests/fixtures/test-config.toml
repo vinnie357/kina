@@ -7,9 +7,13 @@ retain_on_failure = false
 default_cni = "Ptp"
 
 [apple_container]
-# cli_path intentionally unset so the CLI is resolved via PATH detection,
-# which works across architectures (e.g. /opt/homebrew/bin on Apple Silicon)
-# rather than a hardcoded /usr/local/bin path that only exists on Intel.
+# Tests must never touch the real container CLI (external boundary, kina-47):
+# results would otherwise depend on the host's container service state and any
+# kina-labeled containers a developer has around. The stub answers --version
+# and returns an empty container list. Relative path resolves against the
+# package root, which is the cwd cargo gives integration-test binaries (the
+# same assumption TestContext::new already makes to find this fixture).
+cli_path = "tests/fixtures/fake-container.sh"
 
 [apple_container.runtime_config]
 memory_limit = "2Gi"
