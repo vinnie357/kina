@@ -60,7 +60,7 @@ containers directly. See each demo's README for instructions.
 | [ut99](ut99/) | UDP | 7777 | UDPRoute | Public image (phasecorex/ut99-server) |
 | [js-dos-doom](js-dos-doom/) | HTTP | 80 | HTTPRoute + Ingress | Custom arm64 image required |
 | [kube-doom](kube-doom/) | HTTP (noVNC) | 80→6080 | HTTPRoute + Ingress | Custom arm64 image required; **DESTRUCTIVE** |
-| [cnpg-app](cnpg-app/) | HTTP | 80 | HTTPRoute | Public image (ghcr.io/vinnie357/cnpg-phoenix-demo); needs CNPG operator + StorageClass |
+| [cnpg-app](cnpg-app/) | HTTP | 80 | HTTPRoute | HA 3-instance CNPG + analytics cluster, read/write split, failover demo, table browser; needs CNPG operator + StorageClass |
 | [cnpg-service](cnpg-service/) | TCP | 5432 | TCPRoute (NodePort fallback) | Postgres as a service; needs CNPG operator + StorageClass |
 
 ## Routing Prerequisites

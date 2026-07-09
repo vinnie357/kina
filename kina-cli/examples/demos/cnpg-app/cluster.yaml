@@ -1,11 +1,16 @@
-# CloudNativePG cluster for the cnpg-app demo.
+# CloudNativePG clusters for the cnpg-app demo.
 #
-# Single-instance dev Postgres. CNPG creates:
-#   - Services: demo-db-rw (primary), demo-db-ro, demo-db-r (ClusterIP)
-#   - Secret:   demo-db-app (username/password/uri/... for the "app" database owner)
-#   - One PVC per instance (requires a default StorageClass — see README)
+# demo-db (HA, 3 instances) — transactional data (notes):
+#   - Services: demo-db-rw (primary), demo-db-ro (standbys), demo-db-r (any)
+#   - Secret:   demo-db-app (username/password/uri/... for the "app" owner)
+#   - postInitApplicationSQL grants pg_monitor so the app can show
+#     pg_stat_replication standby details (walsender columns are NULL-masked
+#     for unprivileged roles).
 #
-# Requires the CNPG operator (see README prerequisites).
+# metrics-db (1 instance) — second data domain (page-visit events):
+#   - Services: metrics-db-rw/-ro/-r; Secret: metrics-db-app
+#
+# One PVC per instance (4 total) — requires a default StorageClass (README).
 
 ---
 apiVersion: v1
@@ -18,6 +23,23 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: demo-db
+  namespace: cnpg-app
+spec:
+  instances: 3
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+      postInitApplicationSQL:
+        - GRANT pg_monitor TO app
+  storage:
+    size: 1Gi
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: metrics-db
   namespace: cnpg-app
 spec:
   instances: 1

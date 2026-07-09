@@ -30,12 +30,35 @@ spec:
     spec:
       containers:
       - name: phoenix-demo
-        image: ghcr.io/vinnie357/cnpg-phoenix-demo:v0.1.0
+        image: ghcr.io/vinnie357/cnpg-phoenix-demo:v0.2.0
         env:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: demo-db-app
+              key: uri
+        # DB_USER/DB_PASS must be defined BEFORE DATABASE_RO_URL — k8s $(VAR)
+        # expansion only resolves vars earlier in this list; an unresolved
+        # reference is passed through as the literal string.
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-app
+              key: username
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-app
+              key: password
+        # CNPG's app secret has no -ro uri, so compose one against the
+        # read-only service (CNPG passwords are alphanumeric; if that ever
+        # changes, wire the discrete keys instead of a URL).
+        - name: DATABASE_RO_URL
+          value: "postgresql://$(DB_USER):$(DB_PASS)@demo-db-ro.cnpg-app:5432/app"
+        - name: ANALYTICS_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: metrics-db-app
               key: uri
         - name: SECRET_KEY_BASE
           valueFrom:

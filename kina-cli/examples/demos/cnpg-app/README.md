@@ -1,26 +1,36 @@
-# CNPG App Demo — Phoenix + CloudNativePG Postgres
+# CNPG App Demo — Phoenix + HA CloudNativePG Postgres
 
 A minimal [Phoenix LiveView app](https://github.com/vinnie357/cnpg-phoenix-demo)
-backed by a [CloudNativePG](https://cloudnative-pg.io/) (CNPG) Postgres cluster,
-served over HTTP via the Gateway API. The app's home page shows the CNPG wiring
-(Postgres version, database, user, pod, node) and stores notes in the database.
+backed by **two** [CloudNativePG](https://cloudnative-pg.io/) clusters, served
+over HTTP via the Gateway API:
+
+- **demo-db** — a 3-instance HA cluster for the app's notes. The app writes via
+  the `demo-db-rw` service and reads via `demo-db-ro` (hot standbys).
+- **metrics-db** — a single-instance cluster holding a second data domain
+  (page-visit events).
+
+The home page shows the live topology (which CNPG instance each connection pool
+landed on, primary vs hot standby, streaming standbys from
+`pg_stat_replication`), a read-only table browser for both databases, visit
+counts, and the notes form.
 
 Image: `ghcr.io/vinnie357/cnpg-phoenix-demo` (public, multi-arch incl. arm64)
 
 ## Prerequisites
 
-- Running kina cluster with extra memory — the default 4g node cannot hold
-  CNPG + Postgres + the app alongside the cluster components (verified: the
-  node thrashes and probes time out). Default CNI is fine for this HTTP-only
-  demo; use `--cni cilium` only if you also plan to run the
-  [cnpg-service](../cnpg-service/) TCPRoute demo:
+- Running kina cluster with extra memory — four Postgres instances plus the app
+  do not fit the 4g default. Default CNI is fine for this HTTP-only demo; use
+  `--cni cilium` only if you also plan the [cnpg-service](../cnpg-service/)
+  TCPRoute demo:
 
   ```bash
   kina create <cluster> --memory 8g
   ```
+
 - `kina install nginx-gateway-fabric --cluster <cluster>`
 - A default StorageClass — kina clusters ship without one, and CNPG needs a PVC
-  per Postgres instance. Install local-path-provisioner and mark it default:
+  per Postgres instance (4 here). Install local-path-provisioner and mark it
+  default:
 
   ```bash
   kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.36/deploy/local-path-storage.yaml
@@ -38,17 +48,26 @@ Image: `ghcr.io/vinnie357/cnpg-phoenix-demo` (public, multi-arch incl. arm64)
 
 ## Deploy (in order)
 
-**1. Create the Postgres cluster and wait for it to be healthy:**
+**1. Create both Postgres clusters and wait for them to be healthy:**
 
 ```bash
 kubectl apply -f cluster.yaml
-kubectl get cluster -n cnpg-app demo-db -w
-# Wait for STATUS: Cluster in healthy state (first boot pulls the postgres
-# image and runs initdb — allow a couple of minutes)
+kubectl get cluster -n cnpg-app -w
+# Wait for BOTH demo-db (3/3) and metrics-db (1/1) to report
+# "Cluster in healthy state" — demo-db bootstraps the primary first, then
+# joins each standby via pg_basebackup (allow a few minutes on first run).
 ```
 
-If the cluster sits in "Setting up primary", check `kubectl get events -n cnpg-app`
+If a cluster sits in "Setting up primary", check `kubectl get events -n cnpg-app`
 for webhook timeouts or Pending PVCs before changing anything.
+
+> Upgrading an existing single-instance demo-db? `kubectl apply -f cluster.yaml`
+> scales it 1→3 in place, but `postInitApplicationSQL` only runs at bootstrap —
+> grant pg_monitor manually so the standby list isn't NULL-masked:
+>
+> ```bash
+> kubectl exec -n cnpg-app demo-db-1 -c postgres -- psql -U postgres -c 'GRANT pg_monitor TO app'
+> ```
 
 **2. Create the Phoenix secret and deploy the app:**
 
@@ -62,9 +81,9 @@ sed "s/<NODE_IP>/$NODE_IP/g" app.yaml | kubectl apply -f -
 sed "s/<NODE_IP>/$NODE_IP/g" route.yaml | kubectl apply -f -
 ```
 
-The app runs its database migrations on boot. If it starts before the database
-is reachable it exits and Kubernetes restarts it — a few early restarts are
-expected, not a problem.
+The app runs migrations for both databases on boot. If it starts before the
+databases are reachable it exits and Kubernetes restarts it — a few early
+restarts are expected, not a problem.
 
 ## Verify
 
@@ -73,31 +92,43 @@ curl -s -o /dev/null -w "%{http_code}" http://phoenix.$NODE_IP.nip.io
 # 200
 ```
 
-Then open `http://phoenix.<NODE_IP>.nip.io` in a browser:
+Open `http://phoenix.<NODE_IP>.nip.io` in a browser:
 
-- The **Cluster wiring** panel shows the Postgres server version, the `app`
-  database/user from the CNPG-generated secret, and the pod/node the app runs on.
-- **Save a note** — the insert goes over the LiveView websocket through the
-  Gateway, into Postgres via the `demo-db-rw` service. If notes persist after
-  `kubectl delete pod -n cnpg-app -l app=phoenix-demo`, the full CNPG wiring
-  (PVC + credentials + service) is working.
+- **Topology** — three pools: the primary pool (`demo-db-rw`, role *primary*),
+  the read pool (`demo-db-ro`, role *hot standby*, a **different server IP**
+  than the primary — that's the read/write split), and analytics
+  (`metrics-db-rw`). The primary row also lists the streaming standbys
+  (`demo-db-2`, `demo-db-3`) straight from `pg_stat_replication`.
+- **Analytics** — every page load records a visit in the metrics-db cluster.
+- **Databases** — click a table (notes, visits, schema_migrations) to browse
+  its rows; main-database reads go through the replica pool.
+- **Save a note** — inserts over the LiveView websocket into the primary.
+
+## Failover walkthrough (the HA payoff)
+
+```bash
+# 1. Find the current primary
+kubectl get cluster -n cnpg-app demo-db   # PRIMARY column, e.g. demo-db-1
+
+# 2. Kill it
+kubectl delete pod -n cnpg-app demo-db-1
+
+# 3. Watch CNPG promote a standby (seconds)
+kubectl get cluster -n cnpg-app demo-db -w
+```
+
+Reload the page: the primary pool's server IP has changed to the promoted
+instance, your notes are intact, and the standby list re-forms as the old
+primary rejoins as a replica. The page may flash a database error for a few
+seconds mid-promotion — that's the failover window.
 
 ## How the wiring works
 
-CNPG generates a `demo-db-app` secret containing ready-made connection details
-for the `app` database owner. The Deployment consumes its `uri` key directly as
-`DATABASE_URL` — no credentials appear in any manifest:
-
-```yaml
-- name: DATABASE_URL
-  valueFrom:
-    secretKeyRef:
-      name: demo-db-app
-      key: uri
-```
-
-The `uri` points at the `demo-db-rw` service (always the primary). CNPG also
-creates `demo-db-ro`/`demo-db-r` services for read-only traffic.
+CNPG generates a secret per cluster with ready-made connection details. The
+Deployment consumes `demo-db-app`'s `uri` as `DATABASE_URL` and
+`metrics-db-app`'s `uri` as `ANALYTICS_DATABASE_URL`. The read-only URL is
+composed from the same secret's discrete keys against the `demo-db-ro` service
+(CNPG publishes no `-ro` URI). No credentials appear in any manifest.
 
 ## Teardown
 
