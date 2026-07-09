@@ -1,0 +1,29 @@
+# CloudNativePG cluster for the cnpg-app demo.
+#
+# Single-instance dev Postgres. CNPG creates:
+#   - Services: demo-db-rw (primary), demo-db-ro, demo-db-r (ClusterIP)
+#   - Secret:   demo-db-app (username/password/uri/... for the "app" database owner)
+#   - One PVC per instance (requires a default StorageClass — see README)
+#
+# Requires the CNPG operator (see README prerequisites).
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-app
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: demo-db
+  namespace: cnpg-app
+spec:
+  instances: 1
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+  storage:
+    size: 1Gi

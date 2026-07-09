@@ -60,6 +60,8 @@ containers directly. See each demo's README for instructions.
 | [ut99](ut99/) | UDP | 7777 | UDPRoute | Public image (phasecorex/ut99-server) |
 | [js-dos-doom](js-dos-doom/) | HTTP | 80 | HTTPRoute + Ingress | Custom arm64 image required |
 | [kube-doom](kube-doom/) | HTTP (noVNC) | 80→6080 | HTTPRoute + Ingress | Custom arm64 image required; **DESTRUCTIVE** |
+| [cnpg-app](cnpg-app/) | HTTP | 80 | HTTPRoute | Public image (ghcr.io/vinnie357/cnpg-phoenix-demo); needs CNPG operator + StorageClass |
+| [cnpg-service](cnpg-service/) | TCP | 5432 | TCPRoute (NodePort fallback) | Postgres as a service; needs CNPG operator + StorageClass |
 
 ## Routing Prerequisites
 
@@ -80,3 +82,19 @@ kina install nginx-gateway-fabric --cluster <cluster>
 
 For L4 TCPRoute/UDPRoute, see `examples/gatewayapi/README.md` for the extra
 experimental CRDs and kina-43 RBAC setup.
+
+### CloudNativePG (cnpg-* demos)
+
+The cnpg demos additionally need a default StorageClass (kina clusters ship
+without one) and the CNPG operator:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.36/deploy/local-path-storage.yaml
+kubectl patch storageclass local-path \
+  -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+
+kubectl apply --server-side -f \
+  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml
+```
+
+kina-46 tracks making the storage provisioner a proper `kina install` addon.

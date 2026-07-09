@@ -1,0 +1,21 @@
+# TCPRoute exposing the CNPG primary (pg-rw) on the Gateway's tcp-pg listener.
+#
+# Requires: NGF with experimental features + kina-43 RBAC + a "tcp-pg" TCP
+# listener on port 5432 and a matching NginxProxy hostPort.
+# See README (which links the full prerequisite setup).
+
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: pg
+  namespace: cnpg-service
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: tcp-pg
+  rules:
+  - backendRefs:
+    - name: pg-rw
+      port: 5432
