@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
       - name: phoenix-demo
-        image: ghcr.io/vinnie357/cnpg-phoenix-demo:v0.3.0
+        image: ghcr.io/vinnie357/cnpg-phoenix-demo:v0.3.1
         env:
         - name: DATABASE_URL
           valueFrom:

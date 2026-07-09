@@ -103,6 +103,11 @@ Open `http://phoenix.<NODE_IP>.nip.io` in a browser:
 - **Databases** — click a table (notes, visits, schema_migrations) to browse
   its rows; main-database reads go through the replica pool.
 - **Save a note** — inserts over the LiveView websocket into the primary.
+- **LiveView showcase** — open the page in TWO browser windows. Click
+  **Simulate traffic** in the analytics card: 20 visit rows stream into the
+  metrics-db cluster and the visit count climbs live in BOTH windows
+  (Phoenix.PubSub pushes every insert to every connected client). Notes work
+  the same way — type in one window, it appears in the other.
 
 ## Failover walkthrough (the HA payoff)
 
