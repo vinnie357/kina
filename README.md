@@ -70,17 +70,17 @@ After installing via either method:
 If you have [mise](https://mise.jdx.dev/) installed, you can install kina directly from GitHub Releases without cloning the repository:
 
 ```bash
-# Install the latest 0.1.0 release via mise github backend
-mise use github:vinnie357/kina@0.1.0
+# Install the latest 0.2.0 release via mise github backend
+mise use github:vinnie357/kina@0.2.0
 
 # Or add to your project's mise.toml:
 # [tools]
-# "github:vinnie357/kina" = "0.1.0"
+# "github:vinnie357/kina" = "0.2.0"
 ```
 
 The mise github backend auto-selects the `aarch64-apple-darwin` binary on macOS (Apple Silicon). No `asset_pattern` option is needed.
 
-> **Note**: `mise install github:vinnie357/kina@0.1.0` installs the kina CLI binary only. The Apple Container runtime (macOS 26+, `brew install container`) is required separately before creating clusters.
+> **Note**: `mise install github:vinnie357/kina@0.2.0` installs the kina CLI binary only. The Apple Container runtime (macOS 26+, `brew install container`) is required separately before creating clusters.
 
 ### Option 2: From Source
 

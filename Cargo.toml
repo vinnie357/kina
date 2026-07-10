@@ -8,7 +8,7 @@ resolver = "2"
 strip = "symbols"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = ["kina contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/vinnie357/kina"
