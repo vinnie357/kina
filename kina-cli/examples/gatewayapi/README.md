@@ -28,15 +28,29 @@ TCPRoute and UDPRoute are experimental resources not included in the standard
 Gateway API CRD bundle. Install the experimental CRD set:
 
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/experimental-install.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/v1.5.1/config/crd/experimental/gateway.networking.k8s.io_tcproutes.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/v1.5.1/config/crd/experimental/gateway.networking.k8s.io_udproutes.yaml
 ```
 
-Then restart NGF with the experimental-features flag enabled:
+The version must match the standard CRDs the NGF addon installs (v1.5.1).
+Apply only the TCPRoute/UDPRoute CRDs, not the full `experimental-install.yaml`
+bundle: since v1.5.1 a `safe-upgrades.gateway.networking.k8s.io`
+ValidatingAdmissionPolicy denies replacing the installed standard-channel CRDs
+(gateways, httproutes, ...) with experimental-channel versions, so the full
+bundle apply fails. The standard Gateway CRD already accepts `protocol: TCP/UDP`
+listeners — only the route CRDs are missing (verified: listener reports
+`Programmed=True` in this state).
+
+Then enable NGF's experimental features via the CLI flag (NGF only honors the
+`--gateway-api-experimental-features` argument — setting an
+`ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES` env var does nothing; verified
+against NGF 2.6.5, where TCPRoutes were silently ignored until the flag was
+added):
 
 ```bash
-kubectl set env deployment/nginx-gateway \
-  -n nginx-gateway \
-  ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES=true
+kubectl patch deployment nginx-gateway -n nginx-gateway --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--gateway-api-experimental-features"}]'
+kubectl rollout status deployment/nginx-gateway -n nginx-gateway
 ```
 
 ### 4. Apply TCP/UDP RBAC for NGF (kina-43)
@@ -191,6 +205,11 @@ node serves all workloads. Its IP is both the node IP and the cluster entry poin
 | `tcp-route.yaml` | TCP service exposed via TCPRoute |
 | `udp-route.yaml` | UDP service exposed via UDPRoute |
 | `cross-namespace-referencegrant.yaml` | HTTPRoute in a different namespace from the backend Service |
+
+Database-backed Gateway API demos live under `examples/demos/`:
+[cnpg-app](../demos/cnpg-app/) (Phoenix app + CloudNativePG Postgres via
+HTTPRoute) and [cnpg-service](../demos/cnpg-service/) (Postgres exposed to the
+Mac via TCPRoute).
 
 ## Quick Start
 
