@@ -18,15 +18,15 @@ use assert_cmd::Command;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
-// T1 — cargo_metadata_workspace_version_is_0_1_0
+// T1 — cargo_metadata_workspace_version_is_0_2_0
 //
 // Parse the root Cargo.toml (workspace root = env!("CARGO_MANIFEST_DIR")/../Cargo.toml).
-// Assert [workspace.package].version == "0.1.0".
+// Assert [workspace.package].version == "0.2.0".
 // Already true (root Cargo.toml:8) — this guards against accidental regression.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cargo_metadata_workspace_version_is_0_1_0() {
+fn cargo_metadata_workspace_version_is_0_2_0() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let cargo_toml_path = Path::new(manifest_dir)
         .parent()
@@ -57,22 +57,22 @@ fn cargo_metadata_workspace_version_is_0_1_0() {
         .expect("[workspace.package].version must be present in root Cargo.toml");
 
     assert_eq!(
-        version, "0.1.0",
-        "[workspace.package].version in root Cargo.toml must be '0.1.0' (regression guard); \
+        version, "0.2.0",
+        "[workspace.package].version in root Cargo.toml must be '0.2.0' (regression guard); \
          found '{}'",
         version
     );
 }
 
 // ---------------------------------------------------------------------------
-// T2 — cli_version_flag_reports_0_1_0
+// T2 — cli_version_flag_reports_0_2_0
 //
-// `kina --version` succeeds and stdout contains "0.1.0".
+// `kina --version` succeeds and stdout contains "0.2.0".
 // Proves clap #[command(version)] (mod.rs:25) surfaces the workspace version.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cli_version_flag_reports_0_1_0() {
+fn cli_version_flag_reports_0_2_0() {
     let output = Command::cargo_bin("kina")
         .expect("kina binary must be buildable")
         .arg("--version")
@@ -87,8 +87,8 @@ fn cli_version_flag_reports_0_1_0() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("0.1.0"),
-        "kina --version stdout must contain '0.1.0'; got: {:?}",
+        stdout.contains("0.2.0"),
+        "kina --version stdout must contain '0.2.0'; got: {:?}",
         stdout
     );
 }
