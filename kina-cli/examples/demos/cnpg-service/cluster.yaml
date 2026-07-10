@@ -1,0 +1,30 @@
+# CloudNativePG cluster for the cnpg-service demo ("Postgres as a service").
+#
+# Single-instance dev Postgres. CNPG creates:
+#   - Services: pg-rw (primary), pg-ro, pg-r (ClusterIP)
+#   - Secret:   pg-app (username/password/uri/... for the "app" database owner)
+#   - One PVC per instance (requires a default StorageClass — see README)
+#
+# External exposure is handled separately: TCPRoute (tcp-route.yaml) or a
+# CNPG managed NodePort service (README snippet).
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-service
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg
+  namespace: cnpg-service
+spec:
+  instances: 1
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+  storage:
+    size: 1Gi

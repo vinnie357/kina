@@ -1,0 +1,100 @@
+# Phoenix demo app wired to the CNPG cluster.
+#
+# DATABASE_URL comes straight from the CNPG-generated demo-db-app secret's
+# `uri` key — no credentials appear in this manifest.
+#
+# Before applying:
+#   1. The demo-db Cluster must be in healthy state (see README).
+#   2. Create the Phoenix secret:
+#      kubectl -n cnpg-app create secret generic phoenix-demo-secret \
+#        --from-literal=SECRET_KEY_BASE="$(openssl rand -base64 48)"
+#   3. Substitute <NODE_IP> (see README).
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phoenix-demo
+  namespace: cnpg-app
+  labels:
+    app: phoenix-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: phoenix-demo
+  template:
+    metadata:
+      labels:
+        app: phoenix-demo
+    spec:
+      containers:
+      - name: phoenix-demo
+        image: ghcr.io/vinnie357/cnpg-phoenix-demo:v0.3.1
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-app
+              key: uri
+        # DB_USER/DB_PASS must be defined BEFORE DATABASE_RO_URL — k8s $(VAR)
+        # expansion only resolves vars earlier in this list; an unresolved
+        # reference is passed through as the literal string.
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-app
+              key: username
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-app
+              key: password
+        # CNPG's app secret has no -ro uri, so compose one against the
+        # read-only service (CNPG passwords are alphanumeric; if that ever
+        # changes, wire the discrete keys instead of a URL).
+        - name: DATABASE_RO_URL
+          value: "postgresql://$(DB_USER):$(DB_PASS)@demo-db-ro.cnpg-app:5432/app"
+        - name: ANALYTICS_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: metrics-db-app
+              key: uri
+        - name: SECRET_KEY_BASE
+          valueFrom:
+            secretKeyRef:
+              name: phoenix-demo-secret
+              key: SECRET_KEY_BASE
+        - name: PHX_HOST
+          value: "phoenix.<NODE_IP>.nip.io"
+        - name: PORT
+          value: "4000"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        ports:
+        - containerPort: 4000
+          protocol: TCP
+        # Requests only — a memory limit OOM-kills the BEAM instantly on kina
+        # node VMs (the VM kernel's cgroup accounting counts the runtime's
+        # large virtual reservations against memory.max).
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phoenix-demo
+  namespace: cnpg-app
+spec:
+  selector:
+    app: phoenix-demo
+  ports:
+  - name: http
+    port: 4000
+    protocol: TCP
+    targetPort: 4000

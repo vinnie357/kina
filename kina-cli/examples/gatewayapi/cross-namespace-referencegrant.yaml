@@ -1,0 +1,129 @@
+# Cross-Namespace Routing with ReferenceGrant
+#
+# Demonstrates: HTTPRoute in one namespace forwarding to a Service in a different
+# namespace. The Gateway API requires a ReferenceGrant in the target namespace
+# to explicitly allow cross-namespace backend references.
+#
+# Topology:
+#   HTTPRoute (namespace: routing)  -->  Service (namespace: backend)
+#   ReferenceGrant (namespace: backend) allows the cross-namespace reference
+#
+# Prerequisites:
+#   kina install nginx-gateway-fabric --cluster <cluster>
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#
+# Deploy:
+#   sed "s/<NODE_IP>/$NODE_IP/g" cross-namespace-referencegrant.yaml | kubectl apply -f -
+#
+# Test:
+#   curl http://cross-ns.<NODE_IP>.nip.io
+#   # Expected: 200 with "Cross-Namespace Backend" in body
+
+---
+# Backend namespace: hosts the Service and Deployment
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backend
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-app
+  namespace: backend
+  labels:
+    app: backend-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-app
+  template:
+    metadata:
+      labels:
+        app: backend-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: html
+        configMap:
+          name: backend-content
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-content
+  namespace: backend
+data:
+  index.html: |
+    <html><body><h1>Cross-Namespace Backend</h1>
+    <p>This Service is in the "backend" namespace.
+    The HTTPRoute that routes to it is in the "routing" namespace.</p>
+    </body></html>
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-app
+  namespace: backend
+spec:
+  selector:
+    app: backend-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# ReferenceGrant: grants permission for HTTPRoutes in "routing" namespace
+# to reference Services in "backend" namespace.
+# Without this, NGF will reject the cross-namespace backendRef.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routing-namespace
+  namespace: backend           # lives in the TARGET namespace
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: routing         # allow HTTPRoutes from this namespace
+  to:
+  - group: ""
+    kind: Service              # to reference Services in "backend"
+
+---
+# Routing namespace: hosts the HTTPRoute
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: routing
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cross-ns-route
+  namespace: routing
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  hostnames:
+  - "cross-ns.<NODE_IP>.nip.io"
+  rules:
+  - backendRefs:
+    # Cross-namespace reference: Service is in "backend", HTTPRoute is in "routing"
+    - name: backend-app
+      namespace: backend       # explicitly name the target namespace
+      port: 80

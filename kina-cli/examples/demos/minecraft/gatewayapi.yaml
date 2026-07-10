@@ -1,0 +1,88 @@
+# Minecraft — Gateway API variant (TCPRoute)
+#
+# Exposes Minecraft Java Edition on TCP 25565 via TCPRoute.
+# Requires: NGF with experimental features + kina-43 RBAC + tcp-mc listener.
+# See examples/gatewayapi/README.md for the full prerequisite setup.
+#
+# Deploy:
+#   kubectl apply -f gatewayapi.yaml
+#
+# Connect:
+#   Minecraft Java Edition client -> <NODE_IP>:25565
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: games
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft
+  namespace: games
+  labels:
+    app: minecraft
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft
+  template:
+    metadata:
+      labels:
+        app: minecraft
+    spec:
+      containers:
+      - name: minecraft
+        image: itzg/minecraft-server:latest
+        env:
+        - name: EULA
+          value: "TRUE"
+        - name: MEMORY
+          value: "1G"
+        ports:
+        - containerPort: 25565
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1.2Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft
+  namespace: games
+spec:
+  selector:
+    app: minecraft
+  ports:
+  - name: mc
+    port: 25565
+    protocol: TCP
+    targetPort: 25565
+
+---
+# TCPRoute attaches to the "tcp-mc" listener on the NGF Gateway.
+# The Gateway must have a TCP listener named "tcp-mc" on port 25565.
+# See examples/gatewayapi/README.md for the Gateway patch.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: minecraft
+  namespace: games
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: tcp-mc
+  rules:
+  - backendRefs:
+    - name: minecraft
+      port: 25565

@@ -1,0 +1,111 @@
+# UDP Routing with Gateway API (UDPRoute)
+#
+# Demonstrates: L4 UDP passthrough via UDPRoute (experimental Gateway API).
+# The Gateway must have a UDP listener, NGF must be started with
+# --gateway-api-experimental-features, and the extra RBAC from kina-43 applied.
+# See README.md for the full prerequisites.
+#
+# This example runs a UDP echo server.
+# A client sending a UDP packet to <NODE_IP>:9001 gets the packet echoed back.
+#
+# Prerequisites:
+#   See README.md — experimental CRDs + kina-43 RBAC + udp listener on port 9001
+#
+# Deploy:
+#   kubectl apply -f udp-route.yaml
+#
+# Test (from your Mac):
+#   echo "hello UDP" | nc -u <NODE_IP> 9001
+#   # Expected: echoes "hello UDP" back
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: udp-example
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udp-echo
+  namespace: udp-example
+  labels:
+    app: udp-echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udp-echo
+  template:
+    metadata:
+      labels:
+        app: udp-echo
+    spec:
+      containers:
+      - name: echo
+        image: alpine:3.20
+        command:
+        - /bin/sh
+        - -c
+        - |
+          apk add --no-cache socat 2>/dev/null
+          socat UDP-RECVFROM:8000,fork EXEC:cat
+        ports:
+        - containerPort: 8000
+          protocol: UDP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: udp-echo
+  namespace: udp-example
+spec:
+  selector:
+    app: udp-echo
+  ports:
+  - name: echo
+    port: 8000
+    targetPort: 8000
+    protocol: UDP
+
+---
+# UDPRoute (experimental Gateway API resource).
+# parentRef.sectionName must match the Gateway listener name for the UDP port.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: udp-echo
+  namespace: udp-example
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: udp-example-port
+  rules:
+  - backendRefs:
+    - name: udp-echo
+      port: 8000
+
+# NOTE: Before applying, add a UDP listener to the Gateway:
+#
+#   kubectl patch gateway nginx -n nginx-gateway --type=json -p '[
+#     {"op":"add","path":"/spec/listeners/-","value":{
+#       "name":"udp-example-port",
+#       "port":9001,
+#       "protocol":"UDP",
+#       "allowedRoutes":{
+#         "namespaces":{"from":"All"},
+#         "kinds":[{"group":"gateway.networking.k8s.io","kind":"UDPRoute"}]
+#       }
+#     }}
+#   ]'
+#
+# And expose port 9001 via NginxProxy hostPorts:
+#
+#   kubectl patch nginxproxy nginx-gateway-proxy-config -n nginx-gateway \
+#     --type=json -p '[
+#       {"op":"add","path":"/spec/kubernetes/daemonSet/container/hostPorts/-",
+#        "value":{"containerPort":9001,"port":9001}}
+#     ]'

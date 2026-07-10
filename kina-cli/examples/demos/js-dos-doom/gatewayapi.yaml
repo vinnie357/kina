@@ -1,0 +1,77 @@
+# js-dos Doom — Gateway API variant (HTTPRoute)
+#
+# Serves the Doom browser game via HTTPRoute.
+# Requires a custom arm64 image — see README.md for build instructions.
+#
+# Replace REGISTRY/doom-game:arm64 with your actual image reference before applying.
+#
+# Deploy (with substitutions):
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#   sed "s|REGISTRY/doom-game:arm64|<your-registry>/doom-game:arm64|g; s/<NODE_IP>/$NODE_IP/g" \
+#       gatewayapi.yaml | kubectl apply -f -
+#
+# Access:
+#   http://doom-game.<NODE_IP>.nip.io
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doom-game
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doom-game
+  namespace: doom-game
+  labels:
+    app: doom-game
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doom-game
+  template:
+    metadata:
+      labels:
+        app: doom-game
+    spec:
+      containers:
+      - name: doom-game
+        # Replace with your actual arm64 image after building with the Dockerfile
+        image: REGISTRY/doom-game:arm64
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doom-game
+  namespace: doom-game
+spec:
+  selector:
+    app: doom-game
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: doom-game
+  namespace: doom-game
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: http
+  hostnames:
+  - "doom-game.<NODE_IP>.nip.io"
+  rules:
+  - backendRefs:
+    - name: doom-game
+      port: 80

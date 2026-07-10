@@ -1,0 +1,134 @@
+# kube-doom — nginx-ingress variant (Ingress + WebSocket)
+#
+# WARNING: DESTRUCTIVE — kills real pods. Deploy in a dedicated demo cluster only.
+# WARNING: CVE-2025-10202 — broad pod-delete RBAC. See README.md for details.
+#
+# Requires custom arm64 images — see README.md for build instructions.
+#
+# WebSocket note: noVNC uses WebSocket (ws://) for the VNC tunnel.
+# The nginx.org/websocket-services annotation tells nginx-ingress to upgrade
+# the HTTP connection to WebSocket for the kubedoom-web service.
+#
+# Replace image placeholders before applying.
+#
+# Deploy (with substitutions):
+#   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+#   sed "s|REGISTRY/pi-kube-doom:arm64|<reg>/pi-kube-doom:arm64|g; \
+#        s|REGISTRY/novnc-websockify:arm64|<reg>/novnc-websockify:arm64|g; \
+#        s/<NODE_IP>/$NODE_IP/g" ingress.yaml | kubectl apply -f -
+#
+# Access:
+#   http://doom-killer.<NODE_IP>.nip.io
+#
+# Teardown:
+#   kubectl delete namespace kubedoom
+#   kubectl delete clusterrole kubedoom-pods
+#   kubectl delete clusterrolebinding kubedoom-pods
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubedoom
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubedoom-pods
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list", "get", "watch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubedoom-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubedoom-pods
+subjects:
+- kind: ServiceAccount
+  name: kubedoom
+  namespace: kubedoom
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+  labels:
+    app: kubedoom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubedoom
+  template:
+    metadata:
+      labels:
+        app: kubedoom
+    spec:
+      serviceAccountName: kubedoom
+      containers:
+      - name: kubedoom
+        image: REGISTRY/pi-kube-doom:arm64
+        imagePullPolicy: Always
+        ports:
+        - name: vnc
+          containerPort: 5900
+      - name: novnc
+        image: REGISTRY/novnc-websockify:arm64
+        imagePullPolicy: Always
+        ports:
+        - name: novnc
+          containerPort: 6080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubedoom-web
+  namespace: kubedoom
+spec:
+  selector:
+    app: kubedoom
+  ports:
+  - port: 80
+    targetPort: 6080
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubedoom
+  namespace: kubedoom
+  annotations:
+    nginx.org/ssl-redirect: "false"
+    # Required: nginx-ingress must upgrade the connection to WebSocket for noVNC.
+    # List the Service name(s) that use WebSocket protocol.
+    nginx.org/websocket-services: "kubedoom-web"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: "doom-killer.<NODE_IP>.nip.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kubedoom-web
+            port:
+              number: 80

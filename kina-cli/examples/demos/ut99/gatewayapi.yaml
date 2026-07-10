@@ -1,0 +1,99 @@
+# UT99 — Gateway API variant (UDPRoute)
+#
+# Exposes Unreal Tournament 99 on UDP 7777 via UDPRoute.
+# Requires: NGF with experimental features + kina-43 RBAC + udp-game listener.
+# See examples/gatewayapi/README.md for the full prerequisite setup.
+#
+# Deploy:
+#   kubectl apply -f gatewayapi.yaml
+#
+# Connect:
+#   UT99 client (OldUnreal v469 recommended) -> open <NODE_IP>:7777
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: games
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ut99
+  namespace: games
+  labels:
+    app: ut99
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ut99
+  template:
+    metadata:
+      labels:
+        app: ut99
+    spec:
+      containers:
+      - name: ut99
+        image: phasecorex/ut99-server:latest
+        # arm64 quirk: the base image ships without libsdl2 and libasound2.
+        # Install them before launching the server binary.
+        command:
+        - /bin/bash
+        - -c
+        - |
+          apt-get update -q && \
+          apt-get install -y --no-install-recommends libsdl2-2.0-0 libasound2t64 && \
+          exec /app/start_server.sh
+        ports:
+        - containerPort: 7777
+          protocol: UDP
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        volumeMounts:
+        # emptyDir provides writable scratch space for the server process
+        - mountPath: /data
+          name: data
+      volumes:
+      - name: data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ut99
+  namespace: games
+spec:
+  selector:
+    app: ut99
+  ports:
+  - name: game
+    port: 7777
+    protocol: UDP
+    targetPort: 7777
+
+---
+# UDPRoute attaches to the "udp-game" listener on the NGF Gateway.
+# The Gateway must have a UDP listener named "udp-game" on port 7777.
+# See examples/gatewayapi/README.md for the Gateway patch.
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: UDPRoute
+metadata:
+  name: ut99
+  namespace: games
+spec:
+  parentRefs:
+  - name: nginx
+    namespace: nginx-gateway
+    sectionName: udp-game
+  rules:
+  - backendRefs:
+    - name: ut99
+      port: 7777
