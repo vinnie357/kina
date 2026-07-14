@@ -836,6 +836,61 @@ pub fn verify_injection(
     Ok(())
 }
 
+/// Normalize a Docker image reference into the fully-qualified,
+/// registry-host-prefixed form that containerd's CRI plugin uses as its
+/// exact lookup key.
+///
+/// `ctr images import` tags the imported image under whatever short name
+/// was embedded in the source tar. If kubelet later requests the image by
+/// its canonical reference (Docker's own normalization — the form
+/// `docker.io/library/<name>:<tag>` for an unqualified short name), the CRI
+/// plugin's exact-key lookup misses even though the image is present,
+/// surfacing as `ImagePullBackOff`. This function computes that canonical
+/// form so the caller can `ctr images tag` the import under the name
+/// kubelet will actually ask for.
+///
+/// Rules (mirrors Docker reference normalization):
+/// - A reference already has a registry host when its first `/`-separated
+///   component contains `.` or `:`, or is exactly `localhost` — left as-is,
+///   only gaining a `:latest` suffix if it has no tag.
+/// - Otherwise it's a Docker Hub short name: prefix `docker.io/`, adding
+///   `library/` too when there's no `/` at all (the official-images
+///   namespace). A `:latest` suffix is appended if no tag is present.
+#[allow(dead_code)]
+pub fn normalize_image_ref(image: &str) -> String {
+    let mut components = image.splitn(2, '/');
+    let first = components.next().unwrap_or("");
+    let rest = components.next();
+
+    // A bare single-segment reference (no `/` at all) can never carry a
+    // registry host — any `:` present there is a tag colon, not a
+    // host:port colon, so `rest.is_some()` gates the host check.
+    let has_host =
+        rest.is_some() && (first.contains('.') || first.contains(':') || first == "localhost");
+
+    if has_host {
+        return ensure_tag(image);
+    }
+
+    let qualified = match rest {
+        Some(_) => image.to_string(),
+        None => format!("library/{image}"),
+    };
+    ensure_tag(&format!("docker.io/{qualified}"))
+}
+
+/// Append `:latest` to `reference` if its last path segment carries no tag.
+/// The tag colon is looked for after the final `/` so a host:port colon
+/// earlier in the reference is never mistaken for one.
+fn ensure_tag(reference: &str) -> String {
+    let last_segment = reference.rsplit('/').next().unwrap_or(reference);
+    if last_segment.contains(':') {
+        reference.to_string()
+    } else {
+        format!("{reference}:latest")
+    }
+}
+
 /// Client for interacting with Apple Container
 pub struct AppleContainerClient {
     config: Config,
@@ -2160,9 +2215,21 @@ impl AppleContainerClient {
             )));
         }
 
-        // Import the image inside the container using ctr (containerd CLI).
+        // Import the image inside the container using ctr (containerd CLI),
+        // into the `k8s.io` namespace — that's the namespace kubelet's CRI
+        // plugin reads images from, not the default `ctr` namespace, so
+        // importing without `-n k8s.io` leaves the image invisible to kubelet.
         let mut cmd = std::process::Command::new(&self.cli_path);
-        cmd.args(["exec", container_id, "ctr", "images", "import", dest_path]);
+        cmd.args([
+            "exec",
+            container_id,
+            "ctr",
+            "-n",
+            "k8s.io",
+            "images",
+            "import",
+            dest_path,
+        ]);
         let output = cmd.output().context("Failed to load image in container")?;
 
         // Clean up the temp file on all paths.
@@ -2174,6 +2241,41 @@ impl AppleContainerClient {
                 "Failed to load image in container: {}",
                 stderr
             ));
+        }
+
+        // containerd's CRI plugin looks up images by their exact,
+        // registry-qualified key. `ctr images import` preserves whatever
+        // short name was embedded in the tar, so if kubelet requests the
+        // canonical form (e.g. `docker.io/library/alpine:latest` for a bare
+        // `alpine`), the image is present in containerd but invisible to
+        // that lookup — surfacing as ImagePullBackOff. Tag the imported
+        // image under its canonical name so the CRI lookup succeeds.
+        let normalized = normalize_image_ref(image);
+        if normalized != image {
+            let mut tag_cmd = std::process::Command::new(&self.cli_path);
+            tag_cmd.args([
+                "exec",
+                container_id,
+                "ctr",
+                "-n",
+                "k8s.io",
+                "images",
+                "tag",
+                image,
+                &normalized,
+            ]);
+            let tag_output = tag_cmd
+                .output()
+                .context("Failed to tag imported image under its registry-qualified name")?;
+            if !tag_output.status.success() {
+                let stderr = String::from_utf8_lossy(&tag_output.stderr);
+                return Err(anyhow::anyhow!(
+                    "Failed to tag image '{}' as '{}': {}",
+                    image,
+                    normalized,
+                    stderr
+                ));
+            }
         }
 
         debug!(
