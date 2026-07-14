@@ -856,7 +856,6 @@ pub fn verify_injection(
 /// - Otherwise it's a Docker Hub short name: prefix `docker.io/`, adding
 ///   `library/` too when there's no `/` at all (the official-images
 ///   namespace). A `:latest` suffix is appended if no tag is present.
-#[allow(dead_code)]
 pub fn normalize_image_ref(image: &str) -> String {
     let mut components = image.splitn(2, '/');
     let first = components.next().unwrap_or("");
@@ -2250,8 +2249,14 @@ impl AppleContainerClient {
         // `alpine`), the image is present in containerd but invisible to
         // that lookup — surfacing as ImagePullBackOff. Tag the imported
         // image under its canonical name so the CRI lookup succeeds.
+        //
+        // The tag SOURCE must be the tagged form: `container image save
+        // <image>` embeds the tag-defaulted RepoTag (an untagged arg like
+        // `alpine` is saved into the tar as `alpine:latest`), so tagging
+        // from the raw, possibly-untagged CLI argument fails NotFound.
+        let tagged_source = ensure_tag(image);
         let normalized = normalize_image_ref(image);
-        if normalized != image {
+        if normalized != tagged_source {
             let mut tag_cmd = std::process::Command::new(&self.cli_path);
             tag_cmd.args([
                 "exec",
@@ -2261,7 +2266,12 @@ impl AppleContainerClient {
                 "k8s.io",
                 "images",
                 "tag",
-                image,
+                // `--force`: a re-tag (idempotent re-load) or a rebuild that
+                // reuses the same tag with a new digest must overwrite the
+                // existing registry-qualified name rather than error
+                // AlreadyExists and leave it pointing at the stale digest.
+                "--force",
+                &tagged_source,
                 &normalized,
             ]);
             let tag_output = tag_cmd
@@ -2271,7 +2281,7 @@ impl AppleContainerClient {
                 let stderr = String::from_utf8_lossy(&tag_output.stderr);
                 return Err(anyhow::anyhow!(
                     "Failed to tag image '{}' as '{}': {}",
-                    image,
+                    tagged_source,
                     normalized,
                     stderr
                 ));
