@@ -3332,4 +3332,67 @@ kubeadm join 192.168.64.5:6443 --token abcdef.0123456789abcdef \
         let parsed = parse_container_list(json).unwrap();
         assert_eq!(parsed[0].created.as_deref(), Some("2026-06-14T21:52:43Z"));
     }
+
+    // --- normalize_image_ref: Docker reference normalization for CRI lookup ---
+    //
+    // kubelet requests images from containerd's CRI plugin by exact,
+    // fully-qualified key. `kina load` must tag the imported image with the
+    // same name kubelet will ask for, or the pull is invisible to the CRI
+    // (ImagePullBackOff even though the image is present in containerd).
+
+    #[test]
+    fn normalize_image_ref_short_name_gets_docker_io_prefix() {
+        assert_eq!(
+            normalize_image_ref("myorg/tool:latest"),
+            "docker.io/myorg/tool:latest"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_single_name_gets_docker_io_library() {
+        assert_eq!(
+            normalize_image_ref("alpine:latest"),
+            "docker.io/library/alpine:latest"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_single_name_no_tag_gets_latest_appended() {
+        assert_eq!(
+            normalize_image_ref("alpine"),
+            "docker.io/library/alpine:latest"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_dotted_registry_host_unchanged() {
+        assert_eq!(
+            normalize_image_ref("gcr.io/foo/bar:1.2"),
+            "gcr.io/foo/bar:1.2"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_localhost_registry_unchanged() {
+        assert_eq!(
+            normalize_image_ref("localhost:5000/x:latest"),
+            "localhost:5000/x:latest"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_dotted_host_with_port_unchanged() {
+        assert_eq!(
+            normalize_image_ref("registry.example.com:5000/a/b:tag"),
+            "registry.example.com:5000/a/b:tag"
+        );
+    }
+
+    #[test]
+    fn normalize_image_ref_already_fully_qualified_unchanged() {
+        assert_eq!(
+            normalize_image_ref("docker.io/myorg/tool:latest"),
+            "docker.io/myorg/tool:latest"
+        );
+    }
 }
