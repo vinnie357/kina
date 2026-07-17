@@ -6,15 +6,11 @@ This demo installs kagent on a kina cluster, points it at an
 [Ollama](https://ollama.com/) server running on the macOS host (no cloud API
 key required), and applies a minimal hello-world `Agent`.
 
-> **Status: not yet validated on a live cluster.** Validation run 1 found
-> storage and values-key issues (a missing default-StorageClass prerequisite,
-> and values field names originally sourced from the chart's `main` branch
-> instead of the pinned release tag); both are fixed in this revision. The
-> pod→host networking path and whether kina's documented memory-limit OOM
-> class (see the note in [cnpg-app](../cnpg-app/README.md)) reproduces for
-> kagent's Go/Python components remain **unverified**. Re-validation is
-> pending — treat every command below as a documented starting point, not a
-> proven recipe, until someone runs it end to end and updates this note.
+> **Status:** Validation run 2: system reaches operational state on kina
+> (storage fix confirmed; ModelConfig/Agent reconcile). Pending: limits-strip
+> fix (this revision) and end-to-end model response (run 3). Treat every
+> command below as a documented starting point, not a fully proven recipe,
+> until run 3 confirms a working chat response and this note is updated.
 
 ## Prerequisites
 
@@ -46,9 +42,24 @@ key required), and applies a minimal hello-world `Agent`.
   model that allows function calling."*
   ([kagent.dev/docs/kagent/supported-providers/ollama](https://www.kagent.dev/docs/kagent/supported-providers/ollama))
 
+  macOS Ollama listens on `127.0.0.1` only by default, which is unreachable
+  from the cluster VMs — it must be told to listen on all interfaces:
+
   ```bash
   ollama pull llama3.1:8b
-  ollama serve   # if not already running as a background service
+
+  # CLI-launched server:
+  OLLAMA_HOST=0.0.0.0 ollama serve
+
+  # Desktop app instead of the CLI server:
+  launchctl setenv OLLAMA_HOST 0.0.0.0   # then restart the Ollama app
+  ```
+
+  Verify it's actually listening on all interfaces before moving on:
+
+  ```bash
+  lsof -iTCP:11434 -sTCP:LISTEN
+  # COMMAND is ollama, look for *:11434 (all interfaces) not 127.0.0.1:11434
   ```
 
 ## 1. Create the cluster
@@ -147,7 +158,10 @@ If that resolves and returns Ollama's model list JSON, use
 kina itself inspects this address for host↔node-VM reachability
 (`kina-cli/src/core/apple_container.rs`, `inspect_network_bridge`). In
 Apple Container's shared/NAT networking mode, the gateway IP is
-conventionally the macOS host:
+conventionally the macOS host. The `ipv4Gateway` field is the HOST-side
+gateway of the cluster's network (typically an `x.x.x.1` address), NOT the
+node VM's own IP — probing the node's IP instead of the gateway is a
+mis-probe that will not reach the macOS host:
 
 ```bash
 container network inspect kagent-demo --format json | jq -r '.[0].ipv4Gateway // .[0].gateway'

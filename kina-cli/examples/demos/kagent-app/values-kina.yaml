@@ -17,7 +17,7 @@
 #    Python, not BEAM, so this hasn't been confirmed to reproduce for them —
 #    see the README's "Status" note. This overlay strips limits defensively;
 #    if a live run shows Go/Python pods tolerate limits fine, the
-#    `limits: {}` overrides below can be removed per-component.
+#    `limits: null` overrides below can be removed per-component.
 #
 # Field names below are verified against the chart's `values.yaml` and
 # `Chart-template.yaml` at the pinned release tag itself (not `main` — an
@@ -76,15 +76,15 @@ kmcp:
 # the chart default; only the `limits.memory` ceiling is removed)
 controller:
   resources:
-    limits: {}
+    limits: null   # null (not {}) — empty maps merge with chart defaults in Helm
 ui:
   resources:
-    limits: {}
+    limits: null
 kagent-tools:
   resources:
-    limits: {}
+    limits: null
 database:
   postgres:
     bundled:
       resources:
-        limits: {}
+        limits: null
