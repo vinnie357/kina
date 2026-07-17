@@ -19,12 +19,27 @@
 #    if a live run shows Go/Python pods tolerate limits fine, the
 #    `limits: {}` overrides below can be removed per-component.
 #
-# Field names below are verified against the chart's `values.yaml` on the
-# `main` branch:
-# https://raw.githubusercontent.com/kagent-dev/kagent/main/helm/kagent/values.yaml
-# `main` is the closest available source in this environment (no OCI pull
-# tooling); diff against the actual 0.10.0-beta7 tag before relying on this
-# in a real cluster, per the README's validation note.
+# Field names below are verified against the chart's `values.yaml` and
+# `Chart-template.yaml` at the pinned release tag itself (not `main` — an
+# earlier revision of this overlay was sourced from `main`, which is missing
+# the ten built-in agent subcharts main's thinner fetch never surfaced):
+# https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/values.yaml
+# https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/Chart-template.yaml
+#
+# The `kagent` chart is a 14-dependency Helm umbrella chart. Every dependency
+# below defaults to `enabled: true` except `substrate` and `oauth2-proxy`
+# (both already off by default, not referenced here). Disabling ALL ten
+# built-in agents plus kmcp/grafana-mcp/querydoc — i.e. everything except
+# controller/ui/database.postgres.bundled/kagent-tools — has NOT been tested
+# against a live install; it's possible the controller has a CRD/webhook
+# dependency on at least one agent existing. Requires validation.
+#
+# Postgres storage: `database.postgres.bundled` unconditionally renders a
+# PersistentVolumeClaim (`helm/kagent/templates/postgresql.yaml`, no
+# emptyDir/persistence-disabled escape hatch) sized from
+# `database.postgres.bundled.storage` (default 500Mi). This needs a working
+# default StorageClass in the cluster — see the README's "Default
+# StorageClass" prerequisite.
 
 # --- Disable every built-in agent; the demo brings its own Agent CR ---
 k8s-agent:

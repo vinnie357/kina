@@ -6,19 +6,37 @@ This demo installs kagent on a kina cluster, points it at an
 [Ollama](https://ollama.com/) server running on the macOS host (no cloud API
 key required), and applies a minimal hello-world `Agent`.
 
-> **Status: not yet validated on a live cluster.** This example was built
-> from kagent's published Helm chart values and CRD API reference (sources
-> cited inline below), not from an actual `kina create` + `helm install` run.
-> Field names, the pod→host networking path, and whether kina's documented
-> memory-limit OOM class (see the note in [cnpg-app](../cnpg-app/README.md))
-> reproduces for kagent's Go/Python components are all **unverified**. Treat
-> every command below as a documented starting point, not a proven recipe,
-> until someone runs it end to end and updates this note.
+> **Status: not yet validated on a live cluster.** Validation run 1 found
+> storage and values-key issues (a missing default-StorageClass prerequisite,
+> and values field names originally sourced from the chart's `main` branch
+> instead of the pinned release tag); both are fixed in this revision. The
+> pod→host networking path and whether kina's documented memory-limit OOM
+> class (see the note in [cnpg-app](../cnpg-app/README.md)) reproduces for
+> kagent's Go/Python components remain **unverified**. Re-validation is
+> pending — treat every command below as a documented starting point, not a
+> proven recipe, until someone runs it end to end and updates this note.
 
 ## Prerequisites
 
 - A kina cluster (see memory sizing below).
 - [Helm](https://helm.sh/) 3.x.
+- A default StorageClass — kina clusters ship without one, and kagent's
+  bundled Postgres unconditionally claims a PVC (`database.postgres.bundled`,
+  500Mi by default; see `values-kina.yaml`'s header comment for the exact
+  chart template reference — there is no persistence-disabled/emptyDir
+  escape hatch short of pointing at an external database). Install
+  local-path-provisioner and mark it default, the same way the
+  [cnpg-app](../cnpg-app/README.md#prerequisites) demo does:
+
+  ```bash
+  kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.36/deploy/local-path-storage.yaml
+  kubectl patch storageclass local-path \
+    -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+  ```
+
+  As with the cnpg demos, this is a manual step until kina-46 lands a proper
+  `kina install <addon>` for the storage provisioner (see the "CloudNativePG"
+  note in [../README.md](../README.md)).
 - [Ollama](https://ollama.com/) running on the macOS host (not in the
   cluster) with a tool-calling-capable model pulled. This demo uses
   `llama3.1:8b` — confirmed on Ollama's own model library page to carry the
@@ -35,10 +53,18 @@ key required), and applies a minimal hello-world `Agent`.
 
 ## 1. Create the cluster
 
-kagent's stock Helm values enable ten built-in agents plus `querydoc`,
-`grafana-mcp`, and the `kmcp` subchart — none needed here. The values
-overlay in this directory (`values-kina.yaml`) disables all of them and
-strips memory *limits* (not requests) from what's left, per kina's
+The `kagent` chart is a 14-dependency Helm umbrella chart. All ten built-in
+agent subcharts (`k8s-agent`, `kgateway-agent`, `istio-agent`, `promql-agent`,
+`observability-agent`, `argo-rollouts-agent`, `helm-agent`,
+`cilium-policy-agent`, `cilium-manager-agent`, `cilium-debug-agent`) plus
+`grafana-mcp`, `querydoc`, and the `kmcp` subchart default to `enabled: true`
+— none needed here. Left enabled, their combined memory *requests* alone
+total ~2.25Gi (recomputed from all 16 resource-bearing blocks in the chart's
+`values.yaml` at the pinned `v0.10.0-beta7` tag) — already past kina's 2GB
+default cluster memory budget before any hello-world `Agent` pod runs.
+
+The values overlay in this directory (`values-kina.yaml`) disables all of
+them and strips memory *limits* (not requests) from what's left, per kina's
 documented OOM class. What remains after disabling the extras:
 
 | Component | Memory request |
@@ -49,8 +75,11 @@ documented OOM class. What remains after disabling the extras:
 | kagent-tools | 128Mi |
 
 That's ~768Mi of requests before the hello-world `Agent`'s own engine pod
-and kina's system pods (CNI, CoreDNS, kube-proxy) are counted. kina's
-default cluster memory budget is 2GB — too tight a margin. Create the
+and kina's system pods (CNI, CoreDNS, kube-proxy) are counted — recomputed
+directly from the four kept components' `resources` blocks at the pinned
+tag, not copied from the chart's all-16-block total above. kina's default
+cluster memory budget is 2GB — too tight a margin even at the reduced
+footprint once system pods and the demo agent are counted. Create the
 cluster with headroom, following the same pattern as the
 [cnpg-app](../cnpg-app/README.md) demo:
 
@@ -83,13 +112,18 @@ kubectl rollout status deployment -n kagent kagent-controller
 
 `values-kina.yaml`'s field names (agent enable toggles, `querydoc`,
 `grafana-mcp`, `kmcp`, and the `resources.limits` paths for `controller`,
-`ui`, `kagent-tools`, and `database.postgres.bundled`) were verified against
-the chart's `values.yaml` on the `main` branch:
-<https://raw.githubusercontent.com/kagent-dev/kagent/main/helm/kagent/values.yaml>.
-`main` was the only source reachable in the environment this demo was
-authored in (no OCI pull tooling available) — diff the overlay against the
-actual `0.10.0-beta7` tag before relying on it, and open an issue against
-this demo if any key has drifted.
+`ui`, `kagent-tools`, and `database.postgres.bundled`) are verified against
+the chart's `values.yaml` and `Chart-template.yaml` at the pinned
+`v0.10.0-beta7` release tag itself:
+<https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/values.yaml>
+<https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/Chart-template.yaml>
+An earlier revision of this overlay was sourced from the `main` branch,
+which is missing the ten built-in agent subcharts — main's thinner fetch
+never surfaced them, so that revision left those pods unstripped. Disabling
+all ten agents plus `kmcp`/`grafana-mcp`/`querydoc` together (rather than
+leaving at least one agent enabled) has not been tested against a live
+install — it's possible the controller has a CRD/webhook dependency on at
+least one agent existing. **Requires validation.**
 
 ## 3. Find the address of the host's Ollama server
 
