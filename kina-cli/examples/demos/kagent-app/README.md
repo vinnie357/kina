@@ -123,11 +123,20 @@ kubectl rollout status deployment -n kagent kagent-controller
 
 `values-kina.yaml`'s field names (agent enable toggles, `querydoc`,
 `grafana-mcp`, `kmcp`, and the `resources.limits` paths for `controller`,
-`ui`, `kagent-tools`, and `database.postgres.bundled`) are verified against
-the chart's `values.yaml` and `Chart-template.yaml` at the pinned
-`v0.10.0-beta7` release tag itself:
+`ui`, and `database.postgres.bundled`) are verified against the chart's
+`values.yaml` and `Chart-template.yaml` at the pinned `v0.10.0-beta7`
+release tag itself:
 <https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/values.yaml>
 <https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/Chart-template.yaml>
+
+`kagent-tools` is a separate subchart (`kagent-dev/tools` @ `v0.2.1`) whose
+Deployment reads resources from `.Values.tools.resources`, not the parent
+chart's own `kagent-tools.resources` key — that parent-level key is dead
+configuration the subchart template never reads. The correct override path
+from the parent values file is `kagent-tools.tools.resources`, which is
+what `values-kina.yaml` sets (see that block's comment for the subchart
+source citations).
+
 An earlier revision of this overlay was sourced from the `main` branch,
 which is missing the ten built-in agent subcharts — main's thinner fetch
 never surfaced them, so that revision left those pods unstripped. Disabling

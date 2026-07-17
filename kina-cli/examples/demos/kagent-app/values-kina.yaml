@@ -72,15 +72,14 @@ kmcp:
   enabled: false
 
 # --- Strip memory limits on the components that remain enabled ---
-# (controller, ui, bundled postgres, kagent-tools — requests are left as
-# the chart default; only the `limits.memory` ceiling is removed)
+# (controller, ui, bundled postgres — requests are left as the chart
+# default; only the `limits.memory` ceiling is removed. kagent-tools is
+# handled separately below — its resources live at a different path, see
+# that block's comment)
 controller:
   resources:
     limits: null   # null (not {}) — empty maps merge with chart defaults in Helm
 ui:
-  resources:
-    limits: null
-kagent-tools:
   resources:
     limits: null
 database:
@@ -88,3 +87,26 @@ database:
     bundled:
       resources:
         limits: null
+
+# kagent-tools is a genuinely separate subchart (kagent-dev/tools @ v0.2.1,
+# oci://ghcr.io/kagent-dev/tools/helm). Its Deployment template reads
+# `.Values.tools.resources`, NOT the parent chart's own `kagent-tools.resources`
+# block above this comment's sibling entries for controller/ui/database —
+# that parent-level key is dead configuration the subchart template never
+# references (confirmed against
+# https://raw.githubusercontent.com/kagent-dev/tools/v0.2.1/helm/kagent-tools/templates/deployment.yaml,
+# which renders `{{- toYaml .Values.tools.resources | nindent 12 }}`). The
+# correct override path from the parent values file is `kagent-tools.tools.resources`.
+# The subchart's own default requests are 100m CPU / 128Mi memory (its
+# default limits are 1 CPU / 512Mi — larger than the parent's dead-key
+# default of 256Mi-memory-only, which was never actually applied to the
+# running pod). Omitting `limits:` here would NOT strip them — the
+# subchart's own values.yaml supplies limits defaults that merge back in on
+# an omitted key, same as the `{}`-vs-null lesson above; `null` is required.
+kagent-tools:
+  tools:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits: null   # subchart default limits (1 CPU / 512Mi) merge back in unless explicitly nulled
