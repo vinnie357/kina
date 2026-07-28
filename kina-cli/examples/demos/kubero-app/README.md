@@ -6,12 +6,21 @@ runs on Kubernetes as an Operator + UI pair of CRDs (`Kubero`,
 confirmed CNCF project, so this demo does not describe it as one. This demo
 installs the Kubero operator and UI onto a kina cluster, then deploys a
 public container image as a test app through the Kubero dashboard — no git
-provider, container registry, or PersistentVolume required.
+provider or container registry required. A PersistentVolume **is** required
+for Kubero's own database; see Prerequisites below.
 
-> **Status:** Not yet validated on a live cluster. This README documents the
-> intended install and deploy path (kina-53, scaffold slice); every command
-> below is a plan, not a proven recipe, until a live validation run confirms
-> it and this note is updated.
+> **Status:** Not fully validated. Validation run 1 confirmed install → UI
+> reachable → login: the operator reconciles, the `kubero` Service and its
+> `nginx`-class Ingress serve traffic, JWT-based login succeeds with no
+> setup wizard, and the WebSocket upgrade works through the
+> `nginx.org/websocket-services` annotation. Run 1 also found the storage
+> gap this README now documents below (Prerequisites) — but run 1 itself
+> used a manual static-PV workaround, not the
+> `kubero.database.storageClassName: local-path` fix now vendored in
+> `kubero-cr.yaml`; that fix has not yet been re-validated live. Deploying
+> an app through the UI (pipeline → stage → app → reachable) has not been
+> validated at all. Every command below is a plan, not a proven recipe,
+> until the next live validation run confirms it and this note is updated.
 
 ## Prerequisites
 
@@ -48,13 +57,32 @@ provider, container registry, or PersistentVolume required.
   kubectl annotate ingressclass nginx ingressclass.kubernetes.io/is-default-class=true
   ```
 
-- No default StorageClass is required on this path — the minimal install
-  creates zero PersistentVolumeClaims (`registry.enabled`/`registry.create`
-  are both `false` and `kubero.auditLogs.enabled` is `false` in
-  `kubero-cr.yaml`). If you later enable audit logs, a local build
-  registry, or any stateful Kubero addon (Postgres, MongoDB, etc.), you
-  will need the local-path-provisioner prerequisite the
-  [cnpg-app](../cnpg-app/README.md#prerequisites) demo documents.
+- **A StorageClass — required, not optional.** The Kubero chart
+  unconditionally creates a `kubero-data` PersistentVolumeClaim (1Gi) for
+  the app's own SQLite database at `/app/server/db`. This is independent of
+  `kubero.auditLogs.enabled` (`false` in `kubero-cr.yaml`), which only gates
+  a *separate*, optional audit-log PVC — `registry.enabled`/`registry.create`
+  being `false` doesn't affect it either. Upstream's own chart leaves
+  `kubero.database.storageClassName` unset by default, which resolves to an
+  explicit `storageClassName: ""` on the PVC — opting it out of dynamic
+  provisioning and default-class admission entirely, so installing a
+  default StorageClass alone does not bind it (confirmed live in kina-53
+  validation run 1). `kubero-cr.yaml` in this demo sets
+  `kubero.database.storageClassName: local-path` to fix this directly.
+  Install local-path-provisioner and mark it cluster-default before
+  applying the CR — the same prerequisite the
+  [cnpg-app](../cnpg-app/README.md#prerequisites) demo documents:
+
+  ```bash
+  kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.36/deploy/local-path-storage.yaml
+  kubectl patch storageclass local-path \
+    -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
+  ```
+
+  Whether local-path-provisioner's own PVs also dissolve the separate
+  `fsGroup`-does-not-apply-to-`hostPath` permission gap that run 1 hit under
+  a raw `hostPath` PV is **not yet confirmed live** — the next validation
+  run must confirm or refute this before this note is removed.
 
 ## Install (in order)
 
@@ -169,6 +197,10 @@ Through the dashboard:
   every app Ingress it creates. kina ships NGINX Inc's ingress controller,
   which ignores that annotation prefix entirely — these annotations are
   inert here, not a bug to "fix".
+- `kina create` switches your shell's *default* kubectl context to the new
+  cluster as a side effect. If you're running other clusters, check
+  `kubectl config current-context` before and after, and switch back with
+  `kubectl config use-context <previous-context>` when you're done.
 
 ## Teardown
 

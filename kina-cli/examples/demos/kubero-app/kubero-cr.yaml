@@ -14,8 +14,24 @@
 #     registry feature stays disabled (enabled: false, create: false) below,
 #     so the block was dead config and a secret-scanner tripwire in a public
 #     repo
-#   - kubero.auditLogs.enabled stays "false" (upstream default) — this is
-#     what keeps the install PVC-free; do not flip it on this path
+#   - kubero.auditLogs.enabled stays "false" (upstream default) — this only
+#     gates a SEPARATE, optional audit-log PVC. The chart also creates an
+#     unconditional "kubero-data" PVC (1Gi) for the app's own SQLite DB at
+#     /app/server/db, regardless of auditLogs. An earlier version of this
+#     comment claimed auditLogs.enabled: false "keeps the install PVC-free"
+#     — that was wrong (kina-53 validation run 1, live). See the next bullet
+#     for the actual fix.
+#   - kubero.database.storageClassName set to "local-path" (new). Upstream's
+#     own chart default leaves this field unset, which the chart's pvc.yaml
+#     template (helm-charts/kubero/templates/pvc.yaml @ v0.2.2) resolves to
+#     an explicit storageClassName: "" on the kubero-data PVC — opting it
+#     out of dynamic provisioning and default-class admission entirely, so
+#     even a default StorageClass does not bind it (confirmed live). This
+#     field is a valid CR field: the Kubero CRD's spec is fully open
+#     (x-kubernetes-preserve-unknown-fields: true), and the operator maps
+#     spec.kubero straight onto the chart's .Values.kubero. Requires
+#     local-path-provisioner installed and marked cluster-default — see
+#     README Prerequisites.
 #
 # buildPacks / templates / podSizeList / auth / clusterissuer are kept
 # UNTRIMMED pending live validation — these may be required by the
@@ -29,7 +45,11 @@
 #   NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
 #   sed "s/<NODE_IP>/$NODE_IP/g" kubero-cr.yaml | kubectl apply -n kubero -f -
 #
-# Status: not yet validated on a live cluster (kina-53 S1).
+# Status: run 1 (kina-53 S2) validated this CR reconciles, but only via a
+# manual static-PV + hostPath chown workaround applied outside this file —
+# not via the database.storageClassName field below. That field is this
+# round's (S3) direct fix for the same PVC-binding gap and has not itself
+# been re-validated live yet; confirm in the next run.
 apiVersion: application.kubero.dev/v1alpha1
 kind: Kubero
 metadata:
@@ -114,6 +134,10 @@ spec:
         - ReadWriteOnce
       size: 0.1Gi
       limit: 1000
+    # kina-53 D-new: binds the chart's unconditional "kubero-data" PVC
+    # (the app's own SQLite DB) to a real StorageClass — see header comment.
+    database:
+      storageClassName: local-path
     config:
       kubero:
         readonly: false
