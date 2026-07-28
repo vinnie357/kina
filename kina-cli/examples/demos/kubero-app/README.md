@@ -27,8 +27,10 @@ for Kubero's own database; see Prerequisites below.
 > submit logic, with the Security panel's "Read-only Root Filesystem"
 > toggle traced to the exact field
 > (`image.run.securityContext.readOnlyRootFilesystem`) the deployed pod's
-> chart template actually reads; and teardown, with the corrected step
-> ordering documented below.
+> chart template actually reads; and teardown's failure mode — run 3 hit
+> a deadlock under the naive delete order and root-caused it live via a
+> manual finalizer patch. The corrected ordering below is derived from
+> that root cause and has not itself been executed end-to-end.
 
 ## Prerequisites
 
@@ -86,11 +88,6 @@ for Kubero's own database; see Prerequisites below.
   kubectl patch storageclass local-path \
     -p '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "true"}}}'
   ```
-
-  Whether local-path-provisioner's own PVs also dissolve the separate
-  `fsGroup`-does-not-apply-to-`hostPath` permission gap that run 1 hit under
-  a raw `hostPath` PV is **not yet confirmed live** — the next validation
-  run must confirm or refute this before this note is removed.
 
 ## Install (in order)
 
@@ -161,6 +158,34 @@ Fallback, if the Ingress path isn't reachable:
 kubectl port-forward svc/kubero -n kubero 2000:2000
 # then open http://localhost:2000
 ```
+
+### Retrieve or rotate the admin password
+
+If you lost the password chosen in step 3, retrieve it from the secret:
+
+```bash
+kubectl -n kubero get secret kubero-secrets -o jsonpath='{.data.KUBERO_ADMIN_PASSWORD}' | base64 -d
+```
+
+To rotate it, delete and recreate `kubero-secrets` with a new value (re-run
+the step 3 command above), then restart the UI deployment so it picks up
+the new secret:
+
+```bash
+kubectl -n kubero delete secret kubero-secrets
+kubectl create secret generic kubero-secrets \
+  --from-literal=KUBERO_WEBHOOK_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=KUBERO_SESSION_KEY="$(openssl rand -hex 32)" \
+  --from-literal=KUBERO_ADMIN_USERNAME=admin \
+  --from-literal=KUBERO_ADMIN_PASSWORD="<new-password>" \
+  -n kubero
+kubectl -n kubero rollout restart deployment kubero
+```
+
+The three validation runs never rotated credentials, so the
+rollout-restart credential-reload path above is untested — it follows
+standard Kubernetes secret-rotation practice but has not been confirmed
+live against this chart.
 
 ## Deploy an app through Kubero
 
@@ -252,15 +277,21 @@ kubectl port-forward svc/kubero -n kubero 2000:2000
 
 ## Teardown
 
-**Delete the pipeline first — the order below is load-bearing, not
-cosmetic.** The `hello` pipeline's `production` stage lives in its own
-`hello-production` namespace, separate from `kubero`; deleting the `kubero`
-namespace does not cascade to it. Deleting the operator manifest next then
-hangs indefinitely: the orphaned `KuberoApp` CR still carries a
+**Delete the pipeline first — the order below is derived from a
+root-caused failure, not itself executed end-to-end.** The `hello`
+pipeline's `production` stage lives in its own `hello-production`
+namespace, separate from `kubero`; deleting the `kubero` namespace does
+not cascade to it. Run 3 deleted the app CR and pipeline under the naive
+ordering and confirmed live that deleting the operator manifest next hangs
+indefinitely: the orphaned `KuberoApp` CR still carries a
 `helm.sdk.operatorframework.io/uninstall-release` finalizer, and once the
 controller-manager pod that would process that finalizer is gone (the very
 thing the operator-manifest delete removes), nothing is left to unblock the
-CRD deletion — confirmed live, kina-53 validation run 3.
+CRD deletion — recovered live via a manual `kubectl patch ...
+finalizers:[]`. The sequence below — delete the pipeline manifest first
+while a live `KuberoApp` still exists, then wait for the namespace to
+clear — is derived from that root cause; it has not been run end-to-end on
+a live cluster.
 
 ```bash
 kubectl delete -n kubero -f pipeline-hello.yaml

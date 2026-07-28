@@ -47,9 +47,9 @@
 #
 # Status: run 1 (kina-53 S2) validated this CR reconciles, but only via a
 # manual static-PV + hostPath chown workaround applied outside this file —
-# not via the database.storageClassName field below. That field is this
-# round's (S3) direct fix for the same PVC-binding gap and has not itself
-# been re-validated live yet; confirm in the next run.
+# not via the database.storageClassName field below. Runs 2 and 3 validated
+# the database.storageClassName: local-path field directly (PVC bound
+# unaided via local-path-provisioner, zero manual PV, zero manual chown).
 apiVersion: application.kubero.dev/v1alpha1
 kind: Kubero
 metadata:
