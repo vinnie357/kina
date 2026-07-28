@@ -37,13 +37,10 @@
 # grepping the installed CRD from deploy/operator.yaml @ v0.2.2), same as
 # the top-level Kubero CR in kubero-cr.yaml, so this file is schema-valid.
 #
-# [validate-live in run 3]: this file has been verified against source
-# (chart values, form defaults, CRD schema) but NOT yet applied live via
-# kubectl in a validation run — run 2 proved the equivalent API payload
-# (POST /api/pipelines/new with this same deploymentstrategy override)
-# reconciles cleanly, and the operator reconciles a KuberoPipeline CR the
-# same way regardless of how it was created, but that equivalence itself
-# needs a live run to confirm before this note is removed.
+# Validated live (kina-53 validation run 3): applied verbatim via
+# `kubectl apply -n kubero -f pipeline-hello.yaml`, reconciled to
+# Deployed/InstallSuccessful within 33s with no ReleaseFailed at any point,
+# and confirmed via `GET /api/pipelines` with a fresh JWT.
 #
 # Deploy (before creating any App in the dashboard):
 #   kubectl apply -n kubero -f pipeline-hello.yaml

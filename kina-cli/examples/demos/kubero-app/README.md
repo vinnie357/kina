@@ -9,27 +9,26 @@ public container image as a test app through the Kubero dashboard — no git
 provider or container registry required. A PersistentVolume **is** required
 for Kubero's own database; see Prerequisites below.
 
-> **Status:** Not fully validated. Validation run 1 confirmed install → UI
-> reachable → login: the operator reconciles, the `kubero` Service and its
-> `nginx`-class Ingress serve traffic, JWT-based login succeeds with no
-> setup wizard, and the WebSocket upgrade works through the
-> `nginx.org/websocket-services` annotation. Run 2 confirmed the
-> `kubero.database.storageClassName: local-path` fix works completely
-> unaided — zero manual PV, zero manual chown, pod `1/1 Running` with 0
-> restarts — retiring run 1's storage findings outright. Run 2 also found
-> two new upstream bugs in deploying an app through the UI, both
-> root-caused to kubero v3.1.1/operator v0.2.2 source and both worked
-> around below: (1) the pipeline-creation form has no control for
-> `deploymentstrategy` when "Builds" is off, and its hardcoded `"git"`
-> default crash-loops the operator — this README now applies a vendored
-> `pipeline-hello.yaml` via `kubectl` instead of the form; (2) the
-> app-creation form's default `Read-only Root Filesystem` security switch
-> crashes the documented test image — this README now documents turning
-> that switch off via the form's own Advanced/Security panel. Neither fix
-> has been exercised through an actual browser session yet (run 2 used
-> source-verified API payloads, no browser tool was available) — that is
-> the next validation run's job. Every command below is a plan, not a
-> proven recipe, until that run confirms it and this note is updated.
+> **Status:** Validated across three live runs on kina (kubero v3.1.1,
+> operator v0.2.2, kina + Apple Container, arm64). Confirmed live: full
+> install (operator reconciles, `kubero` Service and its `nginx`-class
+> Ingress serve traffic); storage — `kubero.database.storageClassName:
+> local-path` plus the local-path-provisioner prerequisite binds the
+> `kubero-data` PVC completely unaided, zero manual PV, zero manual chown,
+> pod `1/1 Running` with 0 restarts; the UI reachable at its Ingress URL
+> (HTTP 200); JWT login with no setup wizard; the WebSocket upgrade through
+> the `nginx.org/websocket-services` annotation (`101 Switching
+> Protocols`); the vendored [`pipeline-hello.yaml`](pipeline-hello.yaml)
+> applied verbatim via `kubectl apply` and reconciled to
+> `Deployed`/`InstallSuccessful` with no `ReleaseFailed`; the app deployed
+> via the `docker` strategy and reachable at its own `nip.io` URL (HTTP
+> 200, expected `nginxdemos/hello` body) — validated via API payloads
+> reconstructed field-for-field from the kubero v3.1.1 client's `form.vue`
+> submit logic, with the Security panel's "Read-only Root Filesystem"
+> toggle traced to the exact field
+> (`image.run.securityContext.readOnlyRootFilesystem`) the deployed pod's
+> chart template actually reads; and teardown, with the corrected step
+> ordering documented below.
 
 ## Prerequisites
 
@@ -231,24 +230,41 @@ kubectl port-forward svc/kubero -n kubero 2000:2000
   that isn't valid base64, permanently crash-looping the operator with
   `illegal base64 data at input byte 19` and never creating the pipeline's
   namespace. `deploymentstrategy: docker` is confirmed live (kina-53
-  validation run 2) to avoid this entirely; `pipeline-hello.yaml` sets that
-  field directly on the CR so the workaround doesn't need the form at all —
-  see that file's header for the source citations and its
-  [validate-live in run 3] note on the CR-apply mechanism itself.
+  validation run 2 via the API, run 3 via `kubectl apply -f
+  pipeline-hello.yaml` directly) to avoid this entirely — see that file's
+  header for the source citations.
 - **Upstream bug (kubero v3.1.1 client):** the app-creation form defaults
   `Read-only Root Filesystem` to on for every new app, which crashes
   `nginxdemos/hello:0.4` (its nginx entrypoint needs to `mkdir` under
-  `/var/cache/nginx` at startup) with a permanent `CrashLoopBackOff` —
-  confirmed live via a `kubectl patch` to the same
-  `securityContext.readOnlyRootFilesystem` field, kina-53 validation run 2.
-  The form's own "Advanced App Config" → Security → "Read-only Root
-  Filesystem" switch (documented above) sets this identical field and is
-  sourced to the same v3.1.1 form code, but clicking it through an actual
-  browser session is still [validate-live in run 3].
+  `/var/cache/nginx` at startup) with a permanent `CrashLoopBackOff`. The
+  field that actually matters is `image.run.securityContext.
+  readOnlyRootFilesystem` — traced live (kina-53 validation run 3) to the
+  kuberoapp chart's `deployment-web.yaml`, which reads
+  `.Values.image.run.securityContext`, not the top-level `security` object
+  the form also submits (that object is dead code as of v3.1.1: the sync
+  block that would copy it into `image.run.securityContext` is commented
+  out in `form.vue`). The form's own "Advanced App Config" → Security →
+  "Read-only Root Filesystem" switch (documented above) is wired to
+  `buildpack.run.securityContext.readOnlyRootFilesystem`, which flows into
+  the correct field at submit time — so the documented UI click path is
+  correct as written and needs no patch. Confirmed live with zero
+  `kubectl patch` calls: pod `1/1 Running` on the first try, 0 restarts.
 
 ## Teardown
 
+**Delete the pipeline first — the order below is load-bearing, not
+cosmetic.** The `hello` pipeline's `production` stage lives in its own
+`hello-production` namespace, separate from `kubero`; deleting the `kubero`
+namespace does not cascade to it. Deleting the operator manifest next then
+hangs indefinitely: the orphaned `KuberoApp` CR still carries a
+`helm.sdk.operatorframework.io/uninstall-release` finalizer, and once the
+controller-manager pod that would process that finalizer is gone (the very
+thing the operator-manifest delete removes), nothing is left to unblock the
+CRD deletion — confirmed live, kina-53 validation run 3.
+
 ```bash
+kubectl delete -n kubero -f pipeline-hello.yaml
+kubectl wait --for=delete namespace/hello-production --timeout=60s
 kubectl delete namespace kubero
 kubectl delete -f https://raw.githubusercontent.com/kubero-dev/kubero-operator/v0.2.2/deploy/operator.yaml
 kina delete kubero-demo
