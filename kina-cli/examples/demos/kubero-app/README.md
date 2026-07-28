@@ -13,14 +13,23 @@ for Kubero's own database; see Prerequisites below.
 > reachable → login: the operator reconciles, the `kubero` Service and its
 > `nginx`-class Ingress serve traffic, JWT-based login succeeds with no
 > setup wizard, and the WebSocket upgrade works through the
-> `nginx.org/websocket-services` annotation. Run 1 also found the storage
-> gap this README now documents below (Prerequisites) — but run 1 itself
-> used a manual static-PV workaround, not the
-> `kubero.database.storageClassName: local-path` fix now vendored in
-> `kubero-cr.yaml`; that fix has not yet been re-validated live. Deploying
-> an app through the UI (pipeline → stage → app → reachable) has not been
-> validated at all. Every command below is a plan, not a proven recipe,
-> until the next live validation run confirms it and this note is updated.
+> `nginx.org/websocket-services` annotation. Run 2 confirmed the
+> `kubero.database.storageClassName: local-path` fix works completely
+> unaided — zero manual PV, zero manual chown, pod `1/1 Running` with 0
+> restarts — retiring run 1's storage findings outright. Run 2 also found
+> two new upstream bugs in deploying an app through the UI, both
+> root-caused to kubero v3.1.1/operator v0.2.2 source and both worked
+> around below: (1) the pipeline-creation form has no control for
+> `deploymentstrategy` when "Builds" is off, and its hardcoded `"git"`
+> default crash-loops the operator — this README now applies a vendored
+> `pipeline-hello.yaml` via `kubectl` instead of the form; (2) the
+> app-creation form's default `Read-only Root Filesystem` security switch
+> crashes the documented test image — this README now documents turning
+> that switch off via the form's own Advanced/Security panel. Neither fix
+> has been exercised through an actual browser session yet (run 2 used
+> source-verified API payloads, no browser tool was available) — that is
+> the next validation run's job. Every command below is a plan, not a
+> proven recipe, until that run confirms it and this note is updated.
 
 ## Prerequisites
 
@@ -156,14 +165,21 @@ kubectl port-forward svc/kubero -n kubero 2000:2000
 
 ## Deploy an app through Kubero
 
-Through the dashboard:
+1. **Create the Pipeline via `kubectl`, not the dashboard's pipeline form.**
+   The form has no control for the pipeline's deployment strategy when
+   "Builds" (gitops) is left off — its hardcoded default (`git`) crash-loops
+   the operator on a chart-default placeholder secret that isn't valid
+   base64. Apply the vendored CR instead, which sets
+   `deploymentstrategy: docker` directly (see
+   [`pipeline-hello.yaml`](pipeline-hello.yaml) for the full root cause):
 
-1. **Create a Pipeline.** Leave the "Builds" (gitops) toggle **off** — a
-   pipeline name is the only required field, and no git provider connection
-   or personal access token is needed for the Docker deployment strategy
-   used below.
-2. **Add a stage** to the pipeline, e.g. `production`.
-3. **Create an App** inside that stage:
+   ```bash
+   kubectl apply -n kubero -f pipeline-hello.yaml
+   ```
+
+   Open the dashboard — the `hello` pipeline appears with its `production`
+   stage already enabled; no "Add a stage" step is needed.
+2. **Create an App** inside the `production` stage:
    - Deployment strategy: `docker`
    - Image: `nginxdemos/hello`
    - Tag: `0.4`
@@ -174,7 +190,14 @@ Through the dashboard:
      pod:8080` and the app returns a 502 no matter what else is correct.
    - Pod size: `small`
    - Domain: `hello.<NODE_IP>.nip.io`
-4. **Verify:**
+   - **Turn on "Advanced App Config", open the Security panel, and switch
+     off "Read-only Root Filesystem" before saving.** The form defaults
+     this switch on, and `nginxdemos/hello:0.4` needs to `mkdir` under
+     `/var/cache/nginx` at startup — with the default on, the pod
+     permanently `CrashLoopBackOff`s. This switch is the exact field a
+     `kubectl patch ... securityContext/readOnlyRootFilesystem` would
+     otherwise flip by hand; using the form avoids the patch entirely.
+3. **Verify:**
 
    ```bash
    curl -sS "http://hello.$NODE_IP.nip.io/"
@@ -201,6 +224,27 @@ Through the dashboard:
   cluster as a side effect. If you're running other clusters, check
   `kubectl config current-context` before and after, and switch back with
   `kubectl config use-context <previous-context>` when you're done.
+- **Upstream bug (kubero v3.1.1 client + operator v0.2.2):** the
+  pipeline-creation form never exposes `deploymentstrategy` when "Builds" is
+  off, but its hardcoded `"git"` default makes the kuberopipeline chart
+  render a git-deploy-key Secret from a chart-default placeholder string
+  that isn't valid base64, permanently crash-looping the operator with
+  `illegal base64 data at input byte 19` and never creating the pipeline's
+  namespace. `deploymentstrategy: docker` is confirmed live (kina-53
+  validation run 2) to avoid this entirely; `pipeline-hello.yaml` sets that
+  field directly on the CR so the workaround doesn't need the form at all —
+  see that file's header for the source citations and its
+  [validate-live in run 3] note on the CR-apply mechanism itself.
+- **Upstream bug (kubero v3.1.1 client):** the app-creation form defaults
+  `Read-only Root Filesystem` to on for every new app, which crashes
+  `nginxdemos/hello:0.4` (its nginx entrypoint needs to `mkdir` under
+  `/var/cache/nginx` at startup) with a permanent `CrashLoopBackOff` —
+  confirmed live via a `kubectl patch` to the same
+  `securityContext.readOnlyRootFilesystem` field, kina-53 validation run 2.
+  The form's own "Advanced App Config" → Security → "Read-only Root
+  Filesystem" switch (documented above) sets this identical field and is
+  sourced to the same v3.1.1 form code, but clicking it through an actual
+  browser session is still [validate-live in run 3].
 
 ## Teardown
 

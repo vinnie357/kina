@@ -1,0 +1,80 @@
+# KuberoPipeline CR for the "hello" pipeline — vendored for kina (kina-53 S5),
+# applied via kubectl instead of the Kubero UI's pipeline-creation form.
+#
+# Why this file exists instead of a UI click-path step:
+#   The pipeline-creation form (client/src/components/pipelines/form.vue @
+#   v3.1.1) has NO field for spec.deploymentstrategy anywhere in its
+#   template — grepped for `v-model="deploymentstrategy"` at that tag and
+#   found zero matches. Its data() default is `deploymentstrategy: "git"`
+#   (form.vue line 606) and that literal default is submitted regardless of
+#   whether the "Builds" (gitops) switch is on or off; the pipeline-level
+#   selector only exists inside the `v-if="gitops"` block, so a user who
+#   leaves Builds off — the documented path for this demo — has no way to
+#   see or change it. With `deploymentstrategy: "git"`, the kuberopipeline
+#   Helm chart (operator v0.2.2, helm-charts/kuberopipeline/templates/
+#   secret-deployment-keys.yaml + secret-pull-secret-create.yaml) renders a
+#   git-deploy-key Secret from the chart's own placeholder default
+#   (git.keys.pub: "XXXXXXXXX="), which is not valid base64. The operator
+#   crash-loops on `ReleaseFailed: ... illegal base64 data` forever and the
+#   pipeline's namespace never gets created — confirmed live, kina-53
+#   validation run 2 (V13).
+#
+# The fix is one field: deploymentstrategy: docker. Both gating templates
+# above check `deploymentstrategy == "git"` specifically, so docker-strategy
+# pipelines never render them, chart default placeholders and all. Run 2
+# confirmed this live: the identical payload with deploymentstrategy
+# switched to "docker" reconciled cleanly (Deployed/InstallSuccessful),
+# namespace `<pipeline>-production` created, no crash loop.
+#
+# Field shapes below are copied from the chart's own schema
+# (helm-charts/kuberopipeline/values.yaml @ v0.2.2, fetched via `gh api`)
+# and cross-checked against the pipeline form's own data() defaults
+# (form.vue, same tag) for the exact values a real UI session leaving
+# "Builds" off would submit — registry/git left at their UI-default empty
+# shape since deploymentstrategy: docker means neither gated template
+# renders regardless of their contents. The KuberoPipeline CRD carries
+# `x-kubernetes-preserve-unknown-fields: true` on spec (confirmed by
+# grepping the installed CRD from deploy/operator.yaml @ v0.2.2), same as
+# the top-level Kubero CR in kubero-cr.yaml, so this file is schema-valid.
+#
+# [validate-live in run 3]: this file has been verified against source
+# (chart values, form defaults, CRD schema) but NOT yet applied live via
+# kubectl in a validation run — run 2 proved the equivalent API payload
+# (POST /api/pipelines/new with this same deploymentstrategy override)
+# reconciles cleanly, and the operator reconciles a KuberoPipeline CR the
+# same way regardless of how it was created, but that equivalence itself
+# needs a live run to confirm before this note is removed.
+#
+# Deploy (before creating any App in the dashboard):
+#   kubectl apply -n kubero -f pipeline-hello.yaml
+apiVersion: application.kubero.dev/v1alpha1
+kind: KuberoPipeline
+metadata:
+  name: hello
+spec:
+  name: hello
+  deploymentstrategy: docker
+  buildstrategy: plain
+  reviewapps: true
+  registry:
+    host: "https://"
+    username: ""
+    password: ""
+  git:
+    keys: {}
+    repository: {}
+    webhook: {}
+    provider: ""
+  phases:
+    - name: review
+      enabled: false
+      context: ""
+    - name: test
+      enabled: false
+      context: ""
+    - name: stage
+      enabled: false
+      context: ""
+    - name: production
+      enabled: true
+      context: inClusterContext
