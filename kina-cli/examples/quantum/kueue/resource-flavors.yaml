@@ -1,0 +1,22 @@
+# Kueue ResourceFlavors — map quota "flavors" to worker nodes by label.
+#
+# The simulator-class node labels are applied by label-nodes.sh: one worker
+# gets cpu-heavy, the other memory-heavy. A Job's nodeSelector (set via
+# submit-circuit.sh --class) picks which flavor/worker it lands on.
+# Requires: Kueue CRDs Established + nodes labeled (label-nodes.sh).
+# Deploy: applied by install-kueue.sh.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: cpu-heavy
+spec:
+  nodeLabels:
+    simulator-class: cpu-heavy
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: memory-heavy
+spec:
+  nodeLabels:
+    simulator-class: memory-heavy

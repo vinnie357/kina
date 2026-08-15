@@ -1,0 +1,10 @@
+# quantum-sims namespace — where simulator Jobs run, managed by Kueue.
+#
+# Requires: Kueue installed on the cluster (install-kueue.sh does this first).
+# Deploy: applied by install-kueue.sh (kubectl apply -f kueue/namespace.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: quantum-sims
+  labels:
+    kueue.x-k8s.io/managed: "true"

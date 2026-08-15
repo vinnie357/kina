@@ -1,0 +1,13 @@
+# Kueue LocalQueue — the per-namespace entry point Jobs point at.
+#
+# Jobs carry the label kueue.x-k8s.io/queue-name: quantum-sims-queue (set in
+# the job templates); this LocalQueue routes them to the ClusterQueue budget.
+# Requires: the quantum-sim-cluster-queue ClusterQueue (cluster-queue.yaml.tmpl).
+# Deploy: applied by install-kueue.sh.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: quantum-sims-queue
+  namespace: quantum-sims
+spec:
+  clusterQueue: quantum-sim-cluster-queue

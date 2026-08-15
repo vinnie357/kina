@@ -1,0 +1,54 @@
+# PennyLane simulator Job template (envsubst).
+#
+# Rendered and submitted by submit-circuit.sh — not applied directly. The
+# ${...} placeholders are filled from the submit flags and versions.env.
+# Requires: the quantum-sims namespace + LocalQueue (install-kueue.sh) and the
+#   simulator image built + loaded (build-images.sh).
+# Note: this runner is fixed at 2 qubits (see README "Limitations") — use the
+#   2-qubit circuits/bell.qasm.
+# Submit:
+#   ./submit-circuit.sh --simulator pennylane --circuit circuits/bell.qasm
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: ${JOB_PREFIX}-
+  # No namespace here: submit-circuit.sh's `kubectl create -n` is the sole
+  # namespace source, so --namespace works for values other than quantum-sims.
+  labels:
+    kueue.x-k8s.io/queue-name: quantum-sims-queue
+    app: ${JOB_PREFIX}
+spec:
+  parallelism: 1
+  completions: 1
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: ${JOB_PREFIX}
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        simulator-class: ${SIMULATOR_CLASS}
+      containers:
+        - name: simulator
+          image: ${IMAGE}
+          imagePullPolicy: Never
+          args: ["--circuit", "/circuits/${CIRCUIT_FILENAME}", "--shots", "${SHOTS}"]
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: circuit
+              mountPath: /circuits
+            - name: output
+              mountPath: /output
+      volumes:
+        - name: circuit
+          configMap:
+            name: ${CIRCUIT_CONFIGMAP}
+        - name: output
+          emptyDir: {}

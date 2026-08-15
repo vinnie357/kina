@@ -1,0 +1,29 @@
+# Kueue ClusterQueue (envsubst template) — the cluster-wide admission budget.
+#
+# The ${..._QUOTA} placeholders are filled by install-kueue.sh, which derives
+# each flavor's quota live from its worker node's allocatable (85%, headroom
+# rule). Rendered with `envsubst`, not applied directly.
+# Requires: ResourceFlavors (resource-flavors.yaml).
+# Deploy: install-kueue.sh renders + applies this.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: quantum-sim-cluster-queue
+spec:
+  namespaceSelector: {}   # single-tenant lab; all namespaces allowed
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources: ["cpu", "memory"]
+      flavors:
+        - name: cpu-heavy
+          resources:
+            - name: cpu
+              nominalQuota: "${CPU_HEAVY_CPU_QUOTA}"
+            - name: memory
+              nominalQuota: "${CPU_HEAVY_MEM_QUOTA}"
+        - name: memory-heavy
+          resources:
+            - name: cpu
+              nominalQuota: "${MEM_HEAVY_CPU_QUOTA}"
+            - name: memory
+              nominalQuota: "${MEM_HEAVY_MEM_QUOTA}"
