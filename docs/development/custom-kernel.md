@@ -246,3 +246,74 @@ Rebuild and cut a new tag when any of the following occur:
 - Apple Container ships a major version bump that changes vminitd expectations
 
 Each trigger requires: a version-bump PR, a bees comment on the relevant issue with the reason, a new sha256 for the built artifact, and a new release tag (e.g., `kernel-v6.18.5+kina.2` for the first patch of the same upstream). Tag format follows `kernel-v<upstream>+kina.<n>`. Tags are immutable; new content always gets a new tag. (kina-2 VERSION POLICY; kina-5 §3 Phase C)
+
+## BTF-Enabled Variant (CO-RE eBPF Support)
+
+The base kina kernel above builds with `CONFIG_DEBUG_INFO_NONE=y` (`config-arm64`) — no `.BTF` section, so `/sys/kernel/btf/vmlinux` is absent at boot. Most eBPF workloads don't need it: Cilium ships its own bundled BTF data for the features it uses. But any **CO-RE (Compile Once – Run Everywhere) eBPF workload** — tools built with libbpf/BCC that relocate against kernel struct layouts at load time (e.g. `bpftrace`, `bpftool`, custom tracing/observability programs) — requires the running kernel to expose its own BTF so libbpf can resolve field offsets without shipping kernel headers or DKMS modules on the node. This section documents an **opt-in** kernel variant that adds BTF on top of the existing cilium.fragment build, for workloads that need it.
+
+### What (the fragment)
+
+A second config fragment, applied in addition to `cilium.fragment`, merged in the same way (`scripts/kconfig/merge_config.sh -m .config`) before `make olddefconfig`:
+
+```
+# BTF-enabling config fragment (CO-RE eBPF support)
+CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y
+CONFIG_DEBUG_INFO_BTF=y
+```
+
+`CONFIG_DEBUG_INFO_BTF=y` overrides the base config's `CONFIG_DEBUG_INFO_NONE=y` and requires `CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y` as a prerequisite (DWARF debug info is the input `pahole` converts to BTF). Order matters: apply `cilium.fragment` first, then the BTF fragment, so the BTF options win the `DEBUG_INFO` selection.
+
+### How it's built
+
+Building `CONFIG_DEBUG_INFO_BTF` additionally requires `pahole` (the `dwarves` package) in the build toolchain — it converts the compiler's DWARF output into the compact BTF encoding at link time. Add one `RUN` layer to the builder image used for the base kernel (`image/Dockerfile`):
+
+```dockerfile
+# BTF generation (CONFIG_DEBUG_INFO_BTF) requires pahole at build time.
+RUN apt-get update \
+&&  apt-get install -y dwarves \
+&&  apt-get clean \
+&&  rm -rf /var/lib/apt/lists/*
+```
+
+The build script mirrors `build-kina.sh` with one additional `merge_config.sh` call before `make olddefconfig`:
+
+```bash
+#!/bin/bash
+set -e
+
+mkdir -p /kbuild
+tar -xf /kernel/source.tar.xz -C /kbuild --strip-components=1
+cp /kernel/config-arm64 /kbuild/.config
+
+(
+  cd /kbuild
+  bash scripts/kconfig/merge_config.sh -m .config /kernel/cilium.fragment
+  bash scripts/kconfig/merge_config.sh -m .config /kernel/btf.fragment
+  make olddefconfig && \
+    make -j$((`nproc`-1)) LOCALVERSION="${LOCALVERSION}" && \
+    cp arch/arm64/boot/Image /kernel/vmlinux-btf
+)
+```
+
+This is the same clone-and-patch procedure as the base kernel ("How it's built" above) with the BTF fragment and the `dwarves` toolchain layer added — nothing else changes. There is no separate BTF Makefile or source tree: it's the base build, plus one fragment, plus one apt package.
+
+### How to verify
+
+BTF generation is visible in the build log (`BTF` and `BTFIDS` link steps) and confirmed by inspecting the linked kernel's section headers for a non-empty `.BTF` section, e.g. `objdump -h vmlinux | grep BTF` (or `readelf -S`) reports both `.BTF` and `.BTF_ids` sections. On a booted node, confirm with:
+
+```bash
+container run --kernel /path/to/vmlinux-btf --rm alpine:latest sh -c \
+  'ls -la /sys/kernel/btf/vmlinux'
+```
+
+`/sys/kernel/btf/vmlinux` present (non-zero size) confirms the running kernel is exposing BTF; its absence on the base (non-BTF) kernel is the expected baseline.
+
+### How to use it
+
+Identical mechanism to the base kernel — `container run --kernel` per-container injection, zero host mutation:
+
+```bash
+kina create <name> --workers N --cni cilium --kernel-path /path/to/vmlinux-btf
+```
+
+The BTF variant is a drop-in `--kernel-path` swap: it changes nothing about kina's Cilium profile selection (`node_kernel_path` resolving to `Some` still selects the full-eBPF profile as in the base case) — BTF only affects whether CO-RE eBPF tooling running *inside* the cluster can resolve kernel types, not kina's own kernel-selection logic.
