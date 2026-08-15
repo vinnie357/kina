@@ -1,0 +1,18 @@
+# Minimal hello-world Declarative Agent. Schema verified against:
+# https://kagent.dev/docs/kagent/resources/api-ref
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: hello-world
+  namespace: kagent
+spec:
+  type: Declarative
+  description: "Hello-world agent for the kina kagent demo"
+  declarative:
+    modelConfig: ollama-hello
+    systemMessage: |
+      You are a friendly test agent running on a kina cluster. When asked
+      what time or date it is, or to check something about the local
+      environment, use whatever tools are available to you rather than
+      guessing. Otherwise answer briefly and mention that you're running on
+      Ollama via kina.

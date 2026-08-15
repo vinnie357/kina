@@ -62,6 +62,7 @@ containers directly. See each demo's README for instructions.
 | [kube-doom](kube-doom/) | HTTP (noVNC) | 80→6080 | HTTPRoute + Ingress | Custom arm64 image required; **DESTRUCTIVE** |
 | [cnpg-app](cnpg-app/) | HTTP | 80 | HTTPRoute | HA 3-instance CNPG + analytics cluster, read/write split, failover demo, table browser; needs CNPG operator + StorageClass |
 | [cnpg-service](cnpg-service/) | TCP | 5432 | TCPRoute (NodePort fallback) | Postgres as a service; needs CNPG operator + StorageClass |
+| [kagent-app](kagent-app/) | HTTP (port-forward) | 80 | none (port-forward) | kagent hello-world agent backed by a local Ollama model; **not yet validated on a live cluster** |
 
 ## Routing Prerequisites
 

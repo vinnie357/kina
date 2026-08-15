@@ -1,0 +1,41 @@
+# ModelConfig pointing kagent at an Ollama server running on the macOS host
+# (outside the cluster). Schema verified against:
+# https://kagent.dev/docs/kagent/resources/api-ref
+# https://www.kagent.dev/docs/kagent/supported-providers/ollama
+#
+# Before applying: replace HOST_PLACEHOLDER with the address the pod→host
+# discovery step in the README resolves (either `host.docker.internal` or
+# the cluster's `ipv4Gateway`).
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: ollama-hello
+  namespace: kagent
+spec:
+  provider: Ollama
+  model: llama3.1:8b
+  ollama:
+    host: "http://HOST_PLACEHOLDER:11434"
+  # kagent's own Ollama example in the docs above sets apiKeySecret /
+  # apiKeySecretKey even though Ollama does not require an API key — this
+  # reads as a copy-paste artifact from the OpenAI example. Whether the
+  # controller actually requires the Secret to exist for a non-OpenAI
+  # provider is unconfirmed (requires validation on a live cluster). Kept
+  # here, pointing at the dummy Secret in this same directory, so the
+  # ModelConfig doesn't fail reconciliation on a possibly-required field.
+  apiKeySecret: ollama-hello-dummy-key
+  apiKeySecretKey: DUMMY_API_KEY
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ollama-hello-dummy-key
+  namespace: kagent
+type: Opaque
+stringData:
+  # Placeholder only — Ollama performs no key check. Present because the
+  # ModelConfig CRD's apiKeySecret field may be required by the controller
+  # regardless of provider (see the comment above). If a live run shows the
+  # Ollama provider reconciles fine without this Secret, delete both this
+  # Secret and the apiKeySecret/apiKeySecretKey fields above.
+  DUMMY_API_KEY: "not-a-real-key"

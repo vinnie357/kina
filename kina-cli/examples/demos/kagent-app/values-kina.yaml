@@ -1,0 +1,112 @@
+# Helm values overlay for installing kagent on a kina cluster.
+#
+# Two problems the stock `helm/kagent` chart values create on kina:
+#
+# 1. Footprint: the chart enables ten built-in agents plus querydoc,
+#    grafana-mcp, and the kmcp subchart by default. None of those are needed
+#    for this hello-world demo, and their combined *requests* push a stock
+#    install close to (or past) kina's default cluster memory budget before
+#    any Agent pod for the demo itself starts.
+# 2. Memory limits: every component ships a hard `resources.limits.memory`.
+#    kina node VMs OOM-kill workloads at boot when a *limit* (not a request)
+#    is set — the VM kernel's cgroup accounting counts the runtime's large
+#    virtual memory reservations against `memory.max` regardless of actual
+#    usage. This is documented for the BEAM/Erlang runtime in
+#    ../cnpg-app/README.md:146-150 and worked around there the same way:
+#    keep requests, drop limits. kagent's controller/UI/tools are Go and
+#    Python, not BEAM, so this hasn't been confirmed to reproduce for them —
+#    see the README's "Status" note. This overlay strips limits defensively;
+#    if a live run shows Go/Python pods tolerate limits fine, the
+#    `limits: null` overrides below can be removed per-component.
+#
+# Field names below are verified against the chart's `values.yaml` and
+# `Chart-template.yaml` at the pinned release tag itself (not `main` — an
+# earlier revision of this overlay was sourced from `main`, which is missing
+# the ten built-in agent subcharts main's thinner fetch never surfaced):
+# https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/values.yaml
+# https://raw.githubusercontent.com/kagent-dev/kagent/v0.10.0-beta7/helm/kagent/Chart-template.yaml
+#
+# The `kagent` chart is a 14-dependency Helm umbrella chart. Every dependency
+# below defaults to `enabled: true` except `substrate` and `oauth2-proxy`
+# (both already off by default, not referenced here). Disabling ALL ten
+# built-in agents plus kmcp/grafana-mcp/querydoc — i.e. everything except
+# controller/ui/database.postgres.bundled/kagent-tools — has NOT been tested
+# against a live install; it's possible the controller has a CRD/webhook
+# dependency on at least one agent existing. Requires validation.
+#
+# Postgres storage: `database.postgres.bundled` unconditionally renders a
+# PersistentVolumeClaim (`helm/kagent/templates/postgresql.yaml`, no
+# emptyDir/persistence-disabled escape hatch) sized from
+# `database.postgres.bundled.storage` (default 500Mi). This needs a working
+# default StorageClass in the cluster — see the README's "Default
+# StorageClass" prerequisite.
+
+# --- Disable every built-in agent; the demo brings its own Agent CR ---
+k8s-agent:
+  enabled: false
+kgateway-agent:
+  enabled: false
+istio-agent:
+  enabled: false
+promql-agent:
+  enabled: false
+observability-agent:
+  enabled: false
+argo-rollouts-agent:
+  enabled: false
+helm-agent:
+  enabled: false
+cilium-policy-agent:
+  enabled: false
+cilium-manager-agent:
+  enabled: false
+cilium-debug-agent:
+  enabled: false
+
+# --- Disable optional MCP/doc components not needed for a hello-world ---
+querydoc:
+  enabled: false
+grafana-mcp:
+  enabled: false
+kmcp:
+  enabled: false
+
+# --- Strip memory limits on the components that remain enabled ---
+# (controller, ui, bundled postgres — requests are left as the chart
+# default; only the `limits.memory` ceiling is removed. kagent-tools is
+# handled separately below — its resources live at a different path, see
+# that block's comment)
+controller:
+  resources:
+    limits: null   # null (not {}) — empty maps merge with chart defaults in Helm
+ui:
+  resources:
+    limits: null
+database:
+  postgres:
+    bundled:
+      resources:
+        limits: null
+
+# kagent-tools is a genuinely separate subchart (kagent-dev/tools @ v0.2.1,
+# oci://ghcr.io/kagent-dev/tools/helm). Its Deployment template reads
+# `.Values.tools.resources`, NOT the parent chart's own `kagent-tools.resources`
+# block above this comment's sibling entries for controller/ui/database —
+# that parent-level key is dead configuration the subchart template never
+# references (confirmed against
+# https://raw.githubusercontent.com/kagent-dev/tools/v0.2.1/helm/kagent-tools/templates/deployment.yaml,
+# which renders `{{- toYaml .Values.tools.resources | nindent 12 }}`). The
+# correct override path from the parent values file is `kagent-tools.tools.resources`.
+# The subchart's own default requests are 100m CPU / 128Mi memory (its
+# default limits are 1 CPU / 512Mi — larger than the parent's dead-key
+# default of 256Mi-memory-only, which was never actually applied to the
+# running pod). Omitting `limits:` here would NOT strip them — the
+# subchart's own values.yaml supplies limits defaults that merge back in on
+# an omitted key, same as the `{}`-vs-null lesson above; `null` is required.
+kagent-tools:
+  tools:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits: null   # subchart default limits (1 CPU / 512Mi) merge back in unless explicitly nulled
