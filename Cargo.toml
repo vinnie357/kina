@@ -49,7 +49,7 @@ toml = "1.0"
 # Configuration
 config = "0.15"
 directories = "6.0"
-dirs = "6.0"
+dirs = "7.0"
 
 # Network and HTTP
 reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
