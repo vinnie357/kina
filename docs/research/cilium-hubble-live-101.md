@@ -2,37 +2,42 @@
 
 Date: 2026-11-27. Tracker: [kina#101](https://github.com/vinnie357/kina/issues/101).
 
-**The scoped full Cilium eBPF and node-local Hubble journey passed using the current recommended Kata kernel through a small fork kernel-selection hook.**
-Both agents used TCX, full kube-proxy replacement, BPF host routing, and BPF masquerading.
-Cross-node/service traffic and HTTP/DNS allow/deny policies passed, with matching Hubble flow verdicts.
+**The unchanged installed Apple Container 1.7.1 Kubernetes tool passed the scoped full Cilium eBPF and node-local Hubble journey.**
+Phase 4 used the tested recommended Kata 6.18.56 debug kernel through Apple's supported default-kernel setting.
+The operator approved a temporary default switch for cluster creation.
+The original default was restored and verified immediately after creation, before installing Cilium.
+Both agents then used TCX, full kube-proxy replacement, BPF host routing, and BPF masquerading.
 
-The unchanged installed Apple CLI failed earlier with this host's older configured default kernel.
-The fork exposes one cluster-wide `--kernel` option applied to every node; it does not change the global kernel default or replace cluster bootstrap.
-This does not prove that the unchanged stock CLI works on this host or that Kina is obsolete.
-Product decision [#76](https://github.com/vinnie357/kina/issues/76) remains human-owned.
+Bidirectional cross-node HTTP, service traffic, external BPF NAT, HTTP/DNS policies, and correlated Hubble flows passed.
+Pre-policy control requests confirmed that the later-denied URL and DNS name initially worked.
+The fork's kernel flag is an optional isolation convenience, not a requirement for this measured stock workflow.
+The recommended upstream debug kernel suffices for the tested scope; a Kina-specific kernel was not needed.
+This does not establish that Kina is obsolete or settle human-owned product decision [#76](https://github.com/vinnie357/kina/issues/76).
 
 ## Final acceptance result
 
-| Check | Phase 1: release binary, default kernel | Phase 2: standalone guest, recommended kernel | Phase 3: fork debug binary, recommended kernel |
+| Check | Phase 1: stock CLI, old default | Phase 3: fork, recommended kernel | Phase 4: stock CLI, recommended kernel |
 |---|---|---|---|
-| Two-node creation | Failed before kubeadm | Not a cluster test | Passed, 17.5 seconds |
-| Effective full profile on both agents | Not reached | Not a cluster test | Replacement=True; Host=BPF; Masquerading=BPF; Attach=TCX |
-| Actual TCX attachment evidence | Not reached | Not a cluster test | 11 control-plane and 9 worker TCX kernel links |
-| Cross-node pod HTTP | Not reached | Not a cluster test | Passed |
-| ClusterIP service and DNS | Not reached | Not a cluster test | Passed |
-| External egress and BPF NAT | Not reached | Not a cluster test | Passed; map contains actual client translation |
-| L7 HTTP allow/deny | Not reached | Not a cluster test | Allowed body; denied HTTP403 |
-| DNS policy allow/deny | Not reached | Not a cluster test | Allowed address; denied REFUSED |
-| Node-local Hubble, client-side correlation | Not reached | Not a cluster test | Matching FORWARDED and DROPPED HTTP/DNS flows |
-| Cleanup and original workloads | Passed | Passed | Passed; original eleven ID/status values preserved |
+| Two-node creation | Failed before kubeadm | Passed, 17.5 seconds | Passed, 17.13 seconds |
+| Effective full profile, both agents | Not reached | Replacement=True; Host=BPF; Masquerading=BPF; Attach=TCX | Same effective modes |
+| TCX kernel links | Not reached | 11 control-plane, 9 worker | 11 control-plane, 9 worker; primary interface mapped |
+| Cross-node pod HTTP | Not reached | Control plane to worker | Both directions passed |
+| ClusterIP service and DNS | Not reached | Passed | Passed; both BPF service maps validated |
+| External egress and BPF NAT | Not reached | Passed; actual translation | Passed; actual translation |
+| L7 HTTP allow/deny | Not reached | Allowed body; HTTP403 | Same, with pre-policy denied-URL control |
+| DNS policy allow/deny | Not reached | Address; REFUSED | Same, with pre-policy forbidden-name control |
+| Node-local Hubble | Not reached | Client-side HTTP/DNS verdict correlation | Same correlation on stock cluster |
+| Original default | Unchanged | Unchanged | Temporarily switched, immediately restored and verified twice |
+| Cleanup and other workloads | Eleven ID/status values preserved | Eleven preserved | Fresh ten-container baseline preserved; see inventory timing below |
 
-Phase 2 passed nftables rules, BPF map creation, and two program loads; it attached no BPF programs.
-Phase 3 changed both the kernel and binary; stock CLI with the tested kernel as its default remains untested.
-Hubble Relay/UI, upgrades, persistence, stress, broader protocols, and a live Kina comparison were not tested.
+Phase 2 was a standalone kernel probe, not a cluster qualification.
+Phase 4 answers the stock-CLI question that remained open after the earlier council review.
+Relay/UI, NodePort, host-namespace service access, persistence, stress, IPv6, broader protocols, and a live Kina comparison remain untested.
 
 ## Scope and baseline
 
-All runtime checks used `/Users/vinnie/github/kina/.worktrees/101-cilium-probe` at revision `87483edbbd8b5796064c0138d8d38cf262a26e76`.
+Phases 1–3 used `/Users/vinnie/github/kina/.worktrees/101-cilium-probe` at revision `87483edbbd8b5796064c0138d8d38cf262a26e76`.
+Phase 4 used clean revision `843e51f93f39b5794e942631d09c2024198c9a50`; this report changed only after runtime cleanup.
 Phase 1 used a clean tree. Phases 2 and 3 used the lead-approved documentation-only untracked report exception.
 Branch: `docs/101-cilium-probe`.
 The initial report followed phase 1; later sections retain each phase and consolidate the final result.
@@ -62,7 +67,9 @@ The default diagnostic guest actually booted:
 Linux kina101-diag-20261127 6.12.28 #1 SMP Tue May 20 15:19:05 UTC 2025 aarch64 GNU/Linux
 ```
 
-No host upgrade, global kernel change, or global container service restart occurred.
+Phases 1–3 changed no global default.
+Phase 4 temporarily changed only the user runtime's ARM64 guest-kernel default, then restored it.
+No macOS host upgrade or global container service restart occurred in any phase.
 
 ## Supported creation attempt
 
@@ -647,7 +654,7 @@ It does not establish a working live Kina comparison or authorize runtime upgrad
 Final worker checks: `mise run core:secrets` passed with exit `0` after credential cleanup and without cache warnings.
 No tracked executable source changed in the Kina report worktree; the lead owns final documentation gates and publication.
 
-## Additional limits from independent review
+## Phase 3 limits from independent review, before phase 4
 
 This was one short-lived, IPv4 cluster run; the creation duration is one observation.
 Cross-node traffic ran from the control-plane client to the worker server, not in both directions.
@@ -663,7 +670,7 @@ Issue #101 explicitly excluded Relay APIs; node-local evidence does not qualify 
 
 ## Build runner follow-up
 
-The measured runtime commit remains `2cd0790`.
+The phase 3 fork runtime commit remains `2cd0790`.
 Follow-up [1735286](https://github.com/vinnie357/container/commit/17352864986eedf9c0512c36efe4bfd00df227e4) changes only the build runner.
 Swift persisted inherited credential-shaped values in ignored plugin-state caches during the earlier build.
 Those generated files were removed without printing values; outgoing file and commit scans were clean.
@@ -671,8 +678,9 @@ The runner now clears inherited variables and passes only required paths plus op
 Independent review approved it; strict build, 95 unit tests, and the regenerated cache scan passed.
 Any real credentials captured in the earlier local caches should be rotated.
 
-## Council findings review
+## Council findings review, before phase 4
 
+This council reviewed the evidence before phase 4; its opinions below are historical.
 Fable and Astra reviewed the report and fork diff read-only. Carbon reached its configured deadline without an answer.
 The council command exited 1 because `--require-all` was unsatisfied; no unanimous approval is claimed.
 Carbon's log shows successful reads followed by interrupted generation, not a completed review.
@@ -695,8 +703,225 @@ Both reject claims that the fork is necessary, Kina is obsolete, or Kina is alre
 Their proposed next questions differ.
 Fable prioritizes Relay aggregation; Astra prioritizes unchanged stock CLI with the exact tested kernel already configured.
 Relay APIs were outside this issue; global kernel changes were also not authorized.
-The operator should decide which remaining user journey matters in #76 before another runtime experiment.
+The operator subsequently authorized the stock-tool experiment recorded in phase 4.
+That run answers Astra's stock-CLI question; it does not add a new council vote or resolve the missing Carbon response.
 
 Full raw council responses remain in private evidence at `/tmp/kina101/council-findings.json`.
 Carbon's failed run log is `/var/folders/60/_jrn5kb943jcp0n061nkwx080000gn/T/altana/d77c4fb5751504b8/carbon.log`.
 The operator was asked whether to authorize a new bounded Carbon run with a shorter brief.
+
+## Phase 4 — unchanged installed Apple Kubernetes tool
+
+The operator explicitly approved the temporary default switch, immediate restoration, Cilium/Hubble tests, and recording findings in #101.
+No fork binary, plugin replacement, upstream write, global service restart, or configuration-file edit occurred.
+Runtime checks used clean Kina report revision `843e51f93f39b5794e942631d09c2024198c9a50`.
+No transient retry or lowered acceptance criterion was needed.
+
+### Stock binary attribution and supported kernel semantics
+
+The unchanged installed release reported version `1.7.1`, commit `a15b460`.
+Both binary hashes were captured after creation and again after the dataplane tests; they matched:
+
+| Binary | Installed canonical path under `/Users/vinnie/.local/share/mise/installs/container/1.7.1/Payload/` | SHA256 |
+|---|---|---|
+| CLI | `bin/container` | `2e4fdec2272867e2627d4c851a7457e86bf1b8db2d06d8a670f1419f2e85f1df` |
+| Cluster plugin | `libexec/container/plugins/cluster/bin/cluster` | `dfbc6a3012ad77e1bf40b3d1ac6041a11e2433481ee5f2d6aa486c7a22b97582` |
+
+The daemon's configured install root was the same release payload.
+The higher-precedence user-plugin directory `Payload/libexec/container-plugins` did not exist.
+Neither `Payload/bin/plugins` nor an application-root plugins directory existed.
+The bundled cluster directory and binary were ordinary paths, not symlinks to the fork.
+Tagged source resolves plugins through these directories and executes the selected plugin with `execvp`, without a fork.
+Sources: [plugin search](https://github.com/apple/container/blob/1.7.1/Sources/Services/ContainerAPIService/Client/Utility%2BPluginLoader.swift#L24-L46), [CLI delegation](https://github.com/apple/container/blob/1.7.1/Sources/ContainerCommands/DefaultCommand.swift#L84-L100).
+
+The unchanged cluster command exposes no kernel option and sets node management `kernel: nil`.
+The utility therefore asks the fixed `com.apple.container.apiserver` Mach service for its default kernel.
+A client-only `CONTAINER_APP_ROOT` or configuration environment override cannot isolate that daemon setting.
+Sources: [stock provisioner](https://github.com/apple/container/blob/1.7.1/Sources/ContainerCluster/Provisioners/LinuxNodeProvisioner.swift#L116), [kernel selection](https://github.com/apple/container/blob/1.7.1/Sources/Services/ContainerAPIService/Client/Utility.swift#L400-L417), [client service](https://github.com/apple/container/blob/1.7.1/Sources/Services/ContainerAPIService/Client/ClientKernel.swift#L24-L30).
+
+`container system kernel set --binary` accepts a local uncompressed kernel and updates the daemon's default symlink immediately.
+It needs no restart.
+Already-created containers retain their copied `kernel.bin`; subsequent boots read that bundle kernel.
+Only new creations resolving the default during the temporary window could receive the selected kernel.
+Sources: [default installation](https://github.com/apple/container/blob/1.7.1/Sources/Services/ContainerAPIService/Server/Kernel/KernelService.swift#L44-L84), [bundle copy](https://github.com/apple/container/blob/1.7.1/Sources/ContainerResource/Container/Bundle.swift#L89-L94), [runtime boot](https://github.com/apple/container/blob/1.7.1/Sources/Services/RuntimeLinux/Server/RuntimeService.swift#L157-L176).
+
+### Creation and restoration before Cilium
+
+The original kernel was copied to a private external backup before changing the default.
+The backup directory was mode `0700`; its file was mode `0600`.
+Original and backup SHA256 both matched `67bac9f416af4cdc9b151e4ba4962d6515e0ad7acc53816761cf964aa6af6ea0`.
+The tested recommended kernel retained SHA256 `98a1005f8cc395e99b85775b9dce2b239190520b102bf549f4225104dcd7f511`.
+
+The reviewed runner was `.altana/runs/101/stock-default-probe.py`, SHA256 `15ecbcf667670e748819ddc8cb469cd922d6aaf231432534d2287456e017fa20`.
+It bounded creation to 180 seconds, owned a separate process group, and restored the default in `finally`.
+Ordinary interruption triggers bounded group termination and partial evidence before restoration.
+SIGKILL or host failure cannot execute a `finally` block; the external backup remains available for recovery.
+Neither interruption nor recovery was needed in this run.
+
+The runner invoked these unchanged installed commands:
+
+```sh
+container system kernel set --arch arm64 \
+  --binary /tmp/kina101/kernel/opt/kata/share/kata-containers/vmlinux-6.18.56-208-debug
+
+container cluster create --name kina101-stock-default-20261127 \
+  --cpus 2 --memory 4G --workers count=1,cpus=2,memory=4G --cni NONE
+
+container system kernel set --arch arm64 \
+  --binary /tmp/kina101/stock-default-restore/vmlinux-6.12.28-153 --force
+```
+
+The script used the installed CLI's absolute path and an allowlisted environment.
+Its isolated `KUBECONFIG` was `.altana/runs/101/stock-default/kubeconfig`, mode `0600` under a private directory.
+The restoration source was the external backup, never the managed kernel itself.
+This matters because `--force` removes the managed destination before copying.
+
+| Action | UTC, 2026-11-27 | Exit/result |
+|---|---|---|
+| Set tested default | 16:58:19.992–16:58:20.021 | 0 |
+| Stock cluster create | 16:58:20.050–16:58:37.181 | 0; 17.13 seconds |
+| Restore original default | 16:58:37.197–16:58:37.229 | 0 |
+| Verify exact restoration | 16:58:37.257 | Original target and hash matched |
+| Install Cilium | Started 16:59:09.945 | 0; after restoration |
+
+The restored symlink target was exactly:
+`/Users/vinnie/Library/Application Support/com.apple.container/kernels/vmlinux-6.12.28-153`.
+Its content hash matched the original value above.
+Both owned nodes independently reported Linux `6.18.56` after restoration, confirming their retained bundle kernels.
+Node-bundled kubectl and server were `v1.35.5`; containerd was `2.3.1`.
+
+### Full profile, policy controls, and flow evidence
+
+Kube-proxy was Ready `2/2` before the same documented migration used in phase 3.
+Its DaemonSet and ConfigMap deletion and both per-node iptables cleanup commands passed.
+No kube-proxy pods remained before cleanup.
+The host Helm command selected only the private stock-cluster kubeconfig:
+
+```sh
+helm upgrade --install cilium cilium --repo https://helm.cilium.io/ \
+  --version 1.20.5 --namespace kube-system \
+  --set ipam.mode=kubernetes --set kubeProxyReplacement=true \
+  --set bpf.masquerade=true --set bpf.hostLegacyRouting=false \
+  --set bpf.enableTCX=true --set hubble.enabled=true \
+  --set operator.replicas=1 \
+  --set k8sServiceHost=192.168.64.152 --set k8sServicePort=6443
+```
+
+Both agents reported replacement `True`, tunnel `vxlan`, host routing `BPF`, attach mode `TCX`, masquerading `BPF`, and Hubble `Ok`.
+The read-only link helper found 11 control-plane and 9 worker TCX links.
+`ip -o link show` mapped ifindex 2 to `enp0s1` on both nodes.
+Existing TCX links on that interface included ingress attach type 46 and egress type 47 on each node.
+This corroborates effective TCX mode without attaching diagnostic programs.
+
+The client ran on the control plane at `10.244.0.232`; the server ran on the worker at `10.244.1.119`.
+The echo ClusterIP was `10.103.64.140`.
+Both agents' actual BPF service maps contained:
+
+```text
+10.103.64.140:8080/TCP (1)   10.244.1.119:8080/TCP (6) (1)
+```
+
+The rendered fixtures reused phase 3's manifest with the new node names.
+The client DNS container also served a reverse-test file with this command:
+
+```sh
+mkdir -p /www; echo reverse > /www/reverse; exec httpd -f -p 8081 -h /www
+```
+
+The worker server then ran `wget -T 10 -qO- http://10.244.0.232:8081/reverse`.
+The exact fixture is retained as `.altana/runs/101/fixtures-stock-rendered.yaml`.
+The Cilium policy manifest was unchanged from phase 3.
+
+| Check | Concrete result | Exit |
+|---|---|---:|
+| Forward cross-node `/allowed` | Body `allowed` | 0 |
+| Reverse worker-to-control-plane HTTP | Body `reverse` | 0 |
+| Echo service HTTP through DNS/ClusterIP | Body `allowed` | 0 |
+| Pre-policy `/denied` control | Body `denied` | 0 |
+| Pre-policy forbidden DNS control | Kubernetes service resolved to `10.96.0.1` | 0 |
+| External HTTPS | External page returned | 0 |
+| Post-policy `/allowed` | Body `allowed` | 0 |
+| Post-policy `/denied` | HTTP403 assertion passed | 0 |
+| Post-policy echo DNS | Resolved to `10.103.64.140` | 0 |
+| Post-policy forbidden DNS | REFUSED, underlying nslookup exit 1; assertion passed | 0 |
+
+Both agents imported `client-policy` and passed bounded realized-policy waits before the post-policy checks.
+The BPF NAT map corroborated actual client egress:
+
+```text
+TCP OUT 10.244.0.232:51756 -> 104.20.23.154:443 XLATE_SRC 192.168.64.152:51756 Created=6sec ago NeedsCT=0
+TCP IN 104.20.23.154:443 -> 192.168.64.152:51756 XLATE_DST 10.244.0.232:51756 Created=6sec ago NeedsCT=0
+```
+
+Node-local Hubble was queried on both agents with the same command used in phase 3.
+Client-side records on `cilium-g494s` correlated the tested paths and names:
+
+| UTC timestamp, 2026-11-27 | Request | Verdict |
+|---|---|---|
+| 17:01:43.696804172 | GET `/allowed`, client to server | FORWARDED |
+| 17:01:43.846267297 | GET `/denied`, client to server | DROPPED |
+| 17:01:44.017449339 | Echo service DNS, A query | FORWARDED |
+| 17:01:44.211020880 | Forbidden Kubernetes DNS, AAAA query | DROPPED |
+
+This remains node-local observation, not Relay aggregation.
+Both agents, both Envoy instances, the operator, CoreDNS, and fixtures were Ready with zero restarts before teardown.
+Final pod imageIDs matched the phase 3 identity table exactly, including both agents and both Envoy instances.
+
+### Final ownership, inventory timing, and limits
+
+The earlier read-only preflight listed eleven ordinary containers.
+The fresh runner inventory, captured before any default mutation, contained ten: `sizing-lgtm` was already absent.
+No command in this experiment modified or removed that unrelated container.
+The final ten IDs and complete status objects exactly matched the fresh pre-mutation baseline: eight running and two stopped.
+The run therefore preserves its actual ten-container baseline; it does not claim to have restored an earlier eleven-container inventory.
+
+Owned cluster deletion passed at 17:03:25–17:03:37 UTC.
+Final cluster inventory was `[]`; the owned kubeconfig was removed.
+At 17:03:37.405 UTC, the original default symlink and SHA256 were verified again.
+No worker-owned runtime resource or active runtime command remains.
+The inactive managed copy of the tested kernel remains as permitted local cache; no shared pruning occurred.
+The verified old-kernel backup and private evidence remain available.
+
+Phase 4 resolves the earlier stock-tool question, reverse-direction HTTP gap, pre-policy control gap, and service-map evidence gap.
+It does not qualify Relay/UI, NodePort, host-namespace service access, persistence, stress, IPv6, `toFQDNs`, or a working Kina alternative.
+BPF host routing is still evidenced by effective agent status and traffic, without separate host-routing instrumentation.
+The prior council reviewed phases 1–3; these new stock findings are not silently attributed to that review.
+The Carbon response remains missing.
+
+The measured stock workflow needs the recommended kernel and explicit Cilium setup, but no fork or separate cluster lifecycle.
+The fork's option remains useful when avoiding a temporary change to the user runtime's default matters.
+Product scope and retirement decisions remain with the operator in #76.
+
+### Phase 4 evidence index
+
+Private records are under `.altana/runs/101/stock-default/` for creation/restoration and `.altana/runs/101/phase4-*` for the journey.
+Each command record preserves argv, cwd, clean revision `843e51f93f39b5794e942631d09c2024198c9a50`, timestamps, integer exit, and raw log path.
+`original-default.json`, `restoration.json`, `plugin-attribution.json`, and `final-verification.json` preserve the host-state checks.
+No kubeconfig or raw private log is tracked.
+
+| Record stem | UTC start, 2026-11-27 | Exit |
+|---|---|---:|
+| `phase4-helm-install` | 16:59:09 | 0 |
+| `phase4-cilium-rollout` | 16:59:11 | 0 |
+| `phase4-status-cilium-g494s` | 17:01:10 | 0 |
+| `phase4-status-cilium-tzl75` | 17:01:10 | 0 |
+| `phase4-direct-cross-node` | 17:01:39 | 0 |
+| `phase4-cluster-service` | 17:01:39 | 0 |
+| `phase4-denied-url-control` | 17:01:39 | 0 |
+| `phase4-forbidden-dns-control` | 17:01:40 | 0 |
+| `phase4-reverse-cross-node` | 17:01:40 | 0 |
+| `phase4-external-egress` | 17:01:40 | 0 |
+| `phase4-policy-realized-cilium-g494s` | 17:01:42 | 0 |
+| `phase4-policy-realized-cilium-tzl75` | 17:01:43 | 0 |
+| `phase4-http-allow` | 17:01:43 | 0 |
+| `phase4-http-deny` | 17:01:43 | 0 |
+| `phase4-dns-allow` | 17:01:43 | 0 |
+| `phase4-dns-deny` | 17:01:44 | 0 |
+| `phase4-flows-cilium-g494s` | 17:01:44 | 0 |
+| `phase4-flows-cilium-tzl75` | 17:01:44 | 0 |
+| `phase4-link-query-cp` | 17:01:45 | 0 |
+| `phase4-link-query-worker` | 17:01:46 | 0 |
+| `phase4-nat-map` | 17:01:46 | 0 |
+| `phase4-cleanup` | 17:03:25 | 0 |
+| `phase4-clusters-final` | 17:03:37 | 0 |
+| `phase4-containers-final` | 17:03:37 | 0 |
