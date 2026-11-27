@@ -12,7 +12,7 @@ rust = "stable"
 kubectx = "latest"
 kubens = "latest"
 cilium-cli = "0.19.4"
-"github:nushell/nushell" = { version = "0.113.1", exe = "nu" }
+nushell = "0.113.1"
 act = "0.2.89"
 "cargo:cargo-audit" = "0.22.2"
 "cargo:cargo-tarpaulin" = "0.35.4"
