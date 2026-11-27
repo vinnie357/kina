@@ -67,3 +67,7 @@ releases/
 
 # Local mise configuration overrides
 .mise.local.toml
+# Worktrees and ephemeral lead tracking
+.worktrees/
+.bees/
+.altana/runs/

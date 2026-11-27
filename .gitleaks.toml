@@ -17,3 +17,19 @@ regexes = [
     "abcdef\\.0123456789abcdef",
     "sha256:abc123def456",
 ]
+
+# This test string decodes only to a PEM header, with no key material.
+[[allowlists]]
+description = "header-only kubeconfig fixture"
+condition = "AND"
+paths = ['''^kina-cli/tests/host_reachability_tests\.rs$''']
+regexTarget = "match"
+regexes = ['''^LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0t$''']
+
+# Historical Kubernetes log fields contain commit SHAs, not API credentials.
+[[allowlists]]
+description = "archived apiserver commit identifiers"
+condition = "AND"
+paths = ['''^docs/planning/archive/bees/issues-2026-11-27\.jsonl$''']
+regexTarget = "match"
+regexes = ['''^apiserver\.commit: [0-9a-f]{40}\\n$''']

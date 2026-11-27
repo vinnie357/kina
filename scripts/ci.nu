@@ -2,6 +2,14 @@
 
 print "Running CI pipeline..."
 
+let process_result = (do { nu scripts/test-worktree.nu } | complete)
+if $process_result.exit_code != 0 {
+    print $process_result.stdout
+    print $process_result.stderr
+    exit $process_result.exit_code
+}
+print $process_result.stdout
+
 let steps = [
     { name: "fmt check", cmd: "cargo fmt -- --check" }
     { name: "clippy", cmd: "cargo clippy -- -D warnings" }

@@ -304,14 +304,31 @@ run = "nu scripts/colima-stop.nu"
 # BEES ISSUE TRACKING
 # ============================================================================
 
-[tasks."bees:ready"]
-description = "Show bees issues ready to work on (no blockers)"
-run = "bees ready"
 
-[tasks."bees:list"]
-description = "List all open bees issues"
-run = "bees list"
 
-[tasks."bees:sync"]
-description = "Export bees database to JSONL"
-run = "bees sync"
+
+[tasks."worktree:list"]
+description = "List Git worktrees"
+run = "nu scripts/worktree.nu list"
+
+[tasks."worktree:check"]
+description = "Require a clean primary checkout on main"
+run = "nu scripts/worktree.nu check"
+
+[tasks."worktree:new"]
+description = "Create type/ISSUE-slug under .worktrees from origin/main"
+run = "nu scripts/worktree.nu new"
+
+[tasks."council:check"]
+description = "Check the repository Altana council"
+env = { ALTANA_CONFIG = "{{ config_root }}/.altana/altana.toml" }
+run = "altana doctor --json"
+
+[tasks."council:review"]
+description = "Review a plan with the read-only Fable, Astra and Carbon council"
+env = { ALTANA_CONFIG = "{{ config_root }}/.altana/altana.toml" }
+run = "nu scripts/council-review.nu"
+
+[tasks."test:worktree"]
+description = "Validate worktree process in disposable Git fixtures"
+run = "nu scripts/test-worktree.nu"

@@ -490,17 +490,15 @@ kina create my-cluster --image kina/node:v1.36.1
 
 ### Task Tracking
 
-kina uses [bees](https://github.com/ctxshift/bees) for task tracking, a lightweight SQLite-backed local issue tracker. Issues are stored in the `.bees/` directory (JSONL synced via git, SQLite db local-only).
+Use [GitHub Issues](https://github.com/vinnie357/kina/issues) for plans, decisions and completion evidence.
 
 ```bash
-bees ready                       # Find tasks ready to work on (no blockers)
-bees list                        # List all open tasks
-bees show <id>                   # View task details
-bees update <id> --status in_progress  # Claim a task
-bees close <id>                  # Complete a task
+gh issue list --repo vinnie357/kina
+mise run worktree:new -- chore/74-process 74-process
 ```
 
-See [AGENTS.md](AGENTS.md) for the full bees workflow.
+Keep the primary checkout on clean main. See [the worktree process](docs/agents/worktrees.md).
+Bees is optional, uncommitted local lead tracking; [historical issues are archived](docs/planning/archive/bees/README.md).
 
 ### Pre-commit and Secret Scanning
 
@@ -565,9 +563,9 @@ kina/
 │   └── Cargo.toml
 ├── scripts/                    # Extracted mise task scripts (Nushell)
 ├── docs/                       # Research, planning, and development docs
-├── .bees/                      # Task tracking (bees)
+├── .altana/                    # Read-only plan council configuration
 ├── CLAUDE.md                   # AI assistant context
-├── AGENTS.md                   # Bees workflow for AI agents
+├── AGENTS.md                   # Repository process for AI agents
 ├── mise.toml                   # Development automation
 ├── Cargo.toml                  # Workspace configuration
 └── README.md
@@ -658,8 +656,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 1. **Fork and Clone**: Fork the repository and clone your fork
 2. **Setup Environment**: Run `mise run setup:dev` for complete setup
-3. **Find Work**: Run `bees ready` to find available tasks
-4. **Create Branch**: Create a feature branch for your changes
+3. **Find Work**: Browse [GitHub Issues](https://github.com/vinnie357/kina/issues)
+4. **Create Worktree**: Follow [the worktree process](docs/agents/worktrees.md)
 5. **Develop**: Make changes with comprehensive tests
 6. **Quality Checks**: Run `mise run pre-commit` before committing (includes gitleaks)
 7. **Submit PR**: Create a pull request with clear description

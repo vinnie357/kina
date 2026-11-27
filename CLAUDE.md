@@ -7,13 +7,8 @@
 **Development Phase**: Active development with established project structure, comprehensive tooling, and advanced development practices
 
 ## Task Tracking
-Project tasks are tracked with [bees](https://github.com/ctxshift/bees), a lightweight SQLite-backed local issue tracker (JSONL synced via git).
-See [AGENTS.md](AGENTS.md) for bees workflow, session completion rules, and `bees` commands.
-- Tasks stored in `.bees/` directory (issues.jsonl synced via git, SQLite db local-only)
-- Use `bees ready` to find actionable tasks with no blockers
-- Use `bees list` to see all open tasks
-- Workflow: one task = one branch = one PR
-- Commit format: `type(scope): description` (no Co-Authored-By)
+
+Use GitHub Issues. Read [AGENTS.md](AGENTS.md) for repository process.
 
 ## Project Structure
 - **kina-cli/src/**: Rust CLI source (cli/, core/, config/, errors/, utils/)
@@ -34,10 +29,10 @@ See [AGENTS.md](AGENTS.md) for bees workflow, session completion rules, and `bee
 - **CLI Patterns**: Focus on command parsing, configuration management, output formatting
 
 ### Workflow
-- **Bees-driven**: Use `bees ready` to find tasks, `bees update <id> --status in_progress` to claim
-- **Branch per task**: `git checkout main && git pull` then `git checkout -b type/description`
+- **Issue-driven**: Claim the GitHub issue before implementation.
+- **Worktree per task**: Follow `docs/agents/worktrees.md`; keep the primary checkout on clean main.
 - **Research-backed**: Reference docs/research/ for architecture decisions and constraints
-- **Discover tools with mise**: Run `mise tasks` to see all available development tasks. Task namespaces: `test:` (unit tests), `test:cluster:` (integration tests), `test:action:` (GitHub Actions), `kina:` (CLI), `image:` (node images), `k8s:` (Kubernetes tools), `bees:` (bees issue tracking), `gitleaks:` (security scanning), `colima:` (Docker via colima)
+- **Discover tools with mise**: Run `mise tasks` to see all available development tasks. Task namespaces: `test:` (unit tests), `test:cluster:` (integration tests), `test:action:` (GitHub Actions), `kina:` (CLI), `image:` (node images), `k8s:` (Kubernetes tools), `worktree:` (clean-main worktrees), `council:` (plan review), `gitleaks:` (security scanning), `colima:` (Docker via colima)
 
 ### Anti-Fabrication Requirements
 All AI assistants working on this project MUST adhere to strict factual accuracy:
@@ -52,3 +47,17 @@ All AI assistants working on this project MUST adhere to strict factual accuracy
 - **Technology Requirements**: macOS 26+, Apple Container 1.0.0+, kubectl, mise, Nushell
 - **Development Priorities**: Multi-node cluster support, CI pipeline with act/colima, advanced networking
 - **Integration Goals**: Kind (Kubernetes in Docker) workflow compatibility using Apple Container technology
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues holds durable work. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context glossary and ADR layout. See `docs/agents/domain.md`.
