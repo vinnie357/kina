@@ -12,8 +12,9 @@ Thank you for your interest in contributing to kina!
    mise install
    mise run setup
    ```
-3. Find an open task: `bees ready` (this project uses [bees](https://github.com/ctxshift/bees) for issue tracking)
-4. Create a branch: `git checkout -b type/description`
+3. Find work in [GitHub Issues](https://github.com/vinnie357/kina/issues).
+4. Create an issue worktree with `mise run worktree:new -- chore/74-process 74-process`.
+   See [the worktree process](docs/agents/worktrees.md); keep primary main clean.
 
 ## Development Workflow
 

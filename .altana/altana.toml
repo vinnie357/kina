@@ -1,0 +1,52 @@
+[harness.sol-research]
+agent = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+executor = "raw"
+write = false
+dangerously_bypass_permissions = false
+inherit_mcp = false
+oneshot = "print"
+timeout_s = 600
+startup_timeout_s = 120
+
+[harness.fable]
+agent = "claude"
+model = "claude-fable-5-2"
+effort = "low"
+executor = "raw"
+write = false
+dangerously_bypass_permissions = false
+inherit_mcp = false
+oneshot = "print"
+timeout_s = 600
+startup_timeout_s = 120
+
+[harness.astra]
+agent = "codex"
+model = "gpt-6.2-astra"
+effort = "low"
+executor = "raw"
+write = false
+dangerously_bypass_permissions = false
+inherit_mcp = false
+oneshot = "print"
+timeout_s = 600
+startup_timeout_s = 120
+
+[harness.carbon]
+agent = "agy"
+model = "gemini-4-carbon-high"
+executor = "raw"
+write = false
+dangerously_bypass_permissions = false
+inherit_mcp = false
+oneshot = "print"
+timeout_s = 600
+startup_timeout_s = 120
+
+[council]
+default = "kina-plan"
+
+[council.groups.kina-plan]
+members = ["fable", "astra", "carbon"]

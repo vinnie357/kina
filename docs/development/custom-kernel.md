@@ -245,4 +245,4 @@ Rebuild and cut a new tag when any of the following occur:
 - The apple/containerization `config-arm64` baseline changes in a way that affects the required option set
 - Apple Container ships a major version bump that changes vminitd expectations
 
-Each trigger requires: a version-bump PR, a bees comment on the relevant issue with the reason, a new sha256 for the built artifact, and a new release tag (e.g., `kernel-v6.18.5+kina.2` for the first patch of the same upstream). Tag format follows `kernel-v<upstream>+kina.<n>`. Tags are immutable; new content always gets a new tag. (kina-2 VERSION POLICY; kina-5 §3 Phase C)
+Each trigger requires: a version-bump PR, a GitHub Issues comment on the relevant issue with the reason, a new sha256 for the built artifact, and a new release tag (e.g., `kernel-v6.18.5+kina.2` for the first patch of the same upstream). Tag format follows `kernel-v<upstream>+kina.<n>`. Tags are immutable; new content always gets a new tag. (kina-2 VERSION POLICY; kina-5 §3 Phase C)
