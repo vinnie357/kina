@@ -7,25 +7,27 @@ Both agents used TCX, full kube-proxy replacement, BPF host routing, and BPF mas
 Cross-node/service traffic and HTTP/DNS allow/deny policies passed, with matching Hubble flow verdicts.
 
 The unchanged installed Apple CLI failed earlier with this host's older configured default kernel.
-The fork exposes per-node `--kernel` selection; it does not change the global kernel default or replace cluster bootstrap.
+The fork exposes one cluster-wide `--kernel` option applied to every node; it does not change the global kernel default or replace cluster bootstrap.
 This does not prove that the unchanged stock CLI works on this host or that Kina is obsolete.
 Product decision [#76](https://github.com/vinnie357/kina/issues/76) remains human-owned.
 
 ## Final acceptance result
 
-| Check | Phase 1: installed default | Phase 3: fork and recommended kernel |
-|---|---|---|
-| Two-node creation | Failed before kubeadm | Passed, 17.5 seconds |
-| Effective full profile on both agents | Not reached | Replacement=True; Host=BPF; Masquerading=BPF; Attach=TCX |
-| Actual TCX attachment evidence | Not reached | 11 control-plane and 9 worker TCX kernel links |
-| Cross-node pod HTTP | Not reached | Passed |
-| ClusterIP service and DNS | Not reached | Passed |
-| External egress and BPF NAT | Not reached | Passed; map contains actual client translation |
-| L7 HTTP allow/deny | Not reached | Allowed body; denied HTTP403 |
-| DNS policy allow/deny | Not reached | Allowed address; denied REFUSED |
-| Hubble observable flows | Not reached | Matching FORWARDED and DROPPED HTTP/DNS flows |
-| Cleanup and original workloads | Passed | Passed; original eleven ID/status values preserved |
+| Check | Phase 1: release binary, default kernel | Phase 2: standalone guest, recommended kernel | Phase 3: fork debug binary, recommended kernel |
+|---|---|---|---|
+| Two-node creation | Failed before kubeadm | Not a cluster test | Passed, 17.5 seconds |
+| Effective full profile on both agents | Not reached | Not a cluster test | Replacement=True; Host=BPF; Masquerading=BPF; Attach=TCX |
+| Actual TCX attachment evidence | Not reached | Not a cluster test | 11 control-plane and 9 worker TCX kernel links |
+| Cross-node pod HTTP | Not reached | Not a cluster test | Passed |
+| ClusterIP service and DNS | Not reached | Not a cluster test | Passed |
+| External egress and BPF NAT | Not reached | Not a cluster test | Passed; map contains actual client translation |
+| L7 HTTP allow/deny | Not reached | Not a cluster test | Allowed body; denied HTTP403 |
+| DNS policy allow/deny | Not reached | Not a cluster test | Allowed address; denied REFUSED |
+| Node-local Hubble, client-side correlation | Not reached | Not a cluster test | Matching FORWARDED and DROPPED HTTP/DNS flows |
+| Cleanup and original workloads | Passed | Passed | Passed; original eleven ID/status values preserved |
 
+Phase 2 passed nftables rules, BPF map creation, and two program loads; it attached no BPF programs.
+Phase 3 changed both the kernel and binary; stock CLI with the tested kernel as its default remains untested.
 Hubble Relay/UI, upgrades, persistence, stress, broader protocols, and a live Kina comparison were not tested.
 
 ## Scope and baseline
@@ -127,7 +129,8 @@ iptables v1.8.11 (nf_tables): Could not fetch rule set generation id: Invalid ar
 
 `iptables --version` identified `nf_tables`; `/proc/config.gz` explicitly disables `CONFIG_NF_TABLES`.
 Legacy succeeds with the same guest, kernel, capability set, rule, and target.
-This isolates a backend mismatch in the stock preparation path on this host.
+This reproduces a backend mismatch in the diagnostic guest, consistent with the stock preparation failure.
+The cluster command itself omitted the failing command and guest exit code.
 It does not prove that selecting legacy alone completes cluster creation.
 
 ## Kernel capability evidence
@@ -152,9 +155,11 @@ CONFIG_NETFILTER_XT_TARGET_TCPMSS=y
 # CONFIG_NETFILTER_XT_MATCH_SOCKET is not set
 ```
 
-Current Cilium 1.20.5 documentation requires BPF JIT and the BPF classifier among its base kernel features.
-The configured guest therefore fails documented base prerequisites independently of the bootstrap backend mismatch.
-Missing VXLAN and GENEVE also conflict with the documented tunnel prerequisites.
+The documented BPF JIT requirement and VXLAN prerequisite imply incompatibility with the intended profile on this configured kernel.
+This is a documentation inference: phase 1 never started Cilium.
+Missing legacy classifier options alone are not decisive because modern Cilium can use TCX.
+The saved configuration also records `NET_INGRESS=y`, `NET_EGRESS=y`, and `NET_XGRESS=y`.
+It contains no `DEBUG_INFO_BTF` entry; BTF availability and actual TCX behavior were not established in phase 1.
 The missing socket match alone is not decisive: Cilium documents an L7 compatibility fallback.
 Sources: [base and tunnel requirements](https://docs.cilium.io/en/stable/operations/system_requirements/), [kube-proxy replacement](https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/).
 
@@ -220,6 +225,9 @@ The global default remained unchanged.
 The lead accepted the untracked initial Markdown report as a documentation-only exception to clean-tree execution evidence.
 Each phase 2 JSON record retains that exception and both tree snapshots.
 
+Apple Container 1.7.1 explicitly selects Kata 4.3.1 and `vmlinux-6.18.56-208-debug` as its defaults.
+Source: [tagged kernel defaults](https://github.com/apple/container/blob/1.7.1/Sources/ContainerPersistence/ContainerSystemConfig.swift#L202-L204).
+The tested artifact is that debug variant; no non-debug kernel equivalence is claimed.
 The lead downloaded and verified the Kata 4.3.1 ARM64 archive before extraction:
 
 - Archive size: `676287269` bytes.
@@ -342,11 +350,13 @@ Downloaded kernel and private evidence artifacts remain for the lead's investiga
 ## Phase 3 — full profile through the owner fork
 
 The reviewed owner fork added optional cluster kernel selection at Apple Container 1.7.1's baseline.
+`git rev-parse 1.7.1` returned `a15b46097aa4c2325da13c1fb5192b9274aab083`, matching the installed CLI's reported `a15b460`.
+The runtime used a debug build of the fork, not the installed release executable.
 It forwards the same explicit kernel to the control plane and worker.
 The source tree was clean at commit `2cd07909e74fe3a3974a9f3e65cbbe5d765e4574`.
 The lead reported passing fork CI: build and 95 tests.
 The worker verified the clean commit and binary/kernel hashes before further dependent checks.
-Source: [owner fork branch](https://github.com/vinnie357/container/tree/feat/101-kernel-selection).
+Source: [measured owner fork commit](https://github.com/vinnie357/container/commit/2cd07909e74fe3a3974a9f3e65cbbe5d765e4574).
 No upstream issue, pull request, or other upstream write occurred.
 
 The standalone fork binary was:
@@ -595,6 +605,19 @@ The documentation-only dirty-tree exception was explicitly accepted by the lead 
 | Evidence stem | UTC start, 2026-11-27 | Exit |
 |---|---|---:|
 | `phase3-create` | 14:31:40 | 0 |
+| `phase3-flows-cilium-9l6jr` | 14:35:48 | 0 |
+| `phase3-helm-install` | 14:32:20 | 0 |
+| `phase3-link-query-cp` | 14:34:55 | 0 |
+| `phase3-link-query-worker` | 14:35:08 | 0 |
+| `phase3-nat-map` | 14:36:07 | 0 |
+| `phase3-policy-realized-cilium-9l6jr` | 14:35:16 | 0 |
+| `phase3-policy-realized-cilium-dfm8w` | 14:35:17 | 0 |
+| `phase3-proxy-config-delete` | 14:32:17 | 0 |
+| `phase3-proxy-delete` | 14:32:17 | 0 |
+| `phase3-proxy-iptables-kina101-fork-20261127-worker-1` | 14:32:19 | 0 |
+| `phase3-proxy-iptables-kina101-fork-20261127` | 14:32:18 | 0 |
+| `phase3-status-cilium-9l6jr` | 14:33:48 | 0 |
+| `phase3-status-cilium-dfm8w` | 14:33:48 | 0 |
 | `phase3-cilium-rollout` | 14:32:31 | 0 |
 | `phase3-direct-cross-node` | 14:34:42 | 0 |
 | `phase3-cluster-service` | 14:34:43 | 0 |
@@ -615,9 +638,65 @@ Final ordinary inventory retained the exact original eleven IDs and status value
 No worker-owned runtime resource or active runtime command remains.
 Downloaded images, kernel artifacts, and private evidence remain; no shared pruning occurred.
 
-The scoped experiment establishes that a small kernel-selection hook can enable this journey without a separate cluster lifecycle.
+In one run, the kernel hook plus documented kube-proxy migration and explicit Helm configuration enabled the scoped journey.
+The hook preserved the global default; it was not shown necessary for a host already configured with the tested kernel.
+The run does not demonstrate a need for a separate cluster lifecycle or a custom-built kernel.
 It leaves the product choice among retirement, narrowing, integration, and independent lifecycle to issue #76.
 It does not establish a working live Kina comparison or authorize runtime upgrades, library extraction, or upstream publication.
 
 Final worker checks: `mise run core:secrets` passed with exit `0` after credential cleanup and without cache warnings.
 No tracked executable source changed in the Kina report worktree; the lead owns final documentation gates and publication.
+
+## Additional limits from independent review
+
+This was one short-lived, IPv4 cluster run; the creation duration is one observation.
+Cross-node traffic ran from the control-plane client to the worker server, not in both directions.
+DNS traffic was not separately qualified as cross-node traffic.
+NodePort, host-namespace service access, and service-map contents were not tested.
+BPF host routing was reported by both agents; no independent host-routing instrumentation was collected.
+The denied URL and forbidden DNS name lacked pre-policy control requests.
+HTTP403, DNS REFUSED, and correlated Hubble drops support policy attribution despite that missing control.
+DNS policy means DNS-proxy name filtering here; `toFQDNs` egress was not tested.
+TCX link counts were not fully mapped by interface and direction.
+Relay aggregation requires another acceptance decision if cluster-wide Hubble is required.
+Issue #101 explicitly excluded Relay APIs; node-local evidence does not qualify them.
+
+## Build runner follow-up
+
+The measured runtime commit remains `2cd0790`.
+Follow-up [1735286](https://github.com/vinnie357/container/commit/17352864986eedf9c0512c36efe4bfd00df227e4) changes only the build runner.
+Swift persisted inherited credential-shaped values in ignored plugin-state caches during the earlier build.
+Those generated files were removed without printing values; outgoing file and commit scans were clean.
+The runner now clears inherited variables and passes only required paths plus optional Xcode selection.
+Independent review approved it; strict build, 95 unit tests, and the regenerated cache scan passed.
+Any real credentials captured in the earlier local caches should be rotated.
+
+## Council findings review
+
+Fable and Astra reviewed the report and fork diff read-only. Carbon reached its configured deadline without an answer.
+The council command exited 1 because `--require-all` was unsatisfied; no unanimous approval is claimed.
+Carbon's log shows successful reads followed by interrupted generation, not a completed review.
+
+| Harness | Status | Duration | Assessment |
+|---|---|---:|---|
+| Fable | answered | 118.005 s | Sound scoped evidence; required wording and evidence-index corrections |
+| Astra | answered | 40.410 s | Accepts the scoped two-node pass; broader conclusions remain blocked |
+| Carbon | failed, timeout | 605.089 s | No answer; excluded from synthesis |
+
+The report incorporates the completed reviewers' corrections.
+It identifies one cluster-wide kernel option, exact Apple defaults, binary differences, and diagnostic inference limits.
+It indexes both agents' status and Hubble queries, TCX links, NAT, migration, installation, and policy realization.
+The observed Hubble verdicts remain explicitly client-side; worker query success does not establish Relay aggregation.
+
+Both completed reviewers support considering a narrow integration, without treating it as product approval.
+Neither finds demonstrated need for a custom kernel or separate lifecycle for the measured journey.
+Both reject claims that the fork is necessary, Kina is obsolete, or Kina is already a proven working alternative.
+
+Their proposed next questions differ.
+Fable prioritizes Relay aggregation; Astra prioritizes unchanged stock CLI with the exact tested kernel already configured.
+Relay APIs were outside this issue; global kernel changes were also not authorized.
+The operator should decide which remaining user journey matters in #76 before another runtime experiment.
+
+Full raw council responses remain in private evidence at `/tmp/kina101/council-findings.json`.
+Carbon's failed run log is `/var/folders/60/_jrn5kb943jcp0n061nkwx080000gn/T/altana/d77c4fb5751504b8/carbon.log`.
+The operator was asked whether to authorize a new bounded Carbon run with a shorter brief.
