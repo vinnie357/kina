@@ -20,14 +20,16 @@ Codex managed creation and archive/restore are not used for committed repository
 
 For optional bees tracking, create `.worktrees/issue-N/` and initialize bees there.
 Run bees from that directory. Share it only among the parent issue's leads.
+These are ordinary directories, not Git worktrees; `worktree:list` and `git worktree remove` do not manage them.
 Transfer durable evidence to GitHub before deleting the completed worklist.
 
 ## Feature batches
 
+Feature batches and local bees trackers are optional.
 Create item worktrees from the feature branch when parallel writers are needed.
 Keep one writer on the feature branch. Record each item's base revision.
 Review and validate each item before fast-forwarding it into the feature branch.
-Open one PR after local gates pass. Preserve Kubero's branch and open PR #66 while deferred.
+Open one PR after local gates pass. Keep deferred branch decisions in the owning GitHub issue.
 
 ## Finish
 

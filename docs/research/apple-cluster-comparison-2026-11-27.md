@@ -2,7 +2,7 @@
 
 Research date: **2026-11-27**. Kina baseline: **`a9b36123eccb0a12138c8bd8e3c7aa4ae9411f46`**, inspected in the issue #73 worktree.
 
-**Recommendation — narrow Kina to its Cilium/kernel, addons, and verification workflows. Investigate integrating Apple’s cluster backend before investing in another general cluster lifecycle API.** Apple now covers Kina’s original basic proposition, including multiple workers. Kina retains useful integration work, but current evidence does not establish that maintaining a separate bootstrap engine is necessary.
+**Recommendation — investigate whether Kina should retire, narrow, integrate, or retain an independent lifecycle.** Apple now covers the original basic cluster proposition. Confirm an active consumer need before testing differentiation or implementing an adapter.
 
 This is a source comparison, not a runtime qualification. No host runtime changes, upgrades, builds, or live cluster tests were performed.
 
@@ -64,17 +64,27 @@ Kina evidence:
 
 Do not make a library extraction the strategic decision. Establish the consumer contract and backend feasibility first, then extract the smallest stable interface. Apple itself publishes a Swift `ContainerCluster` library; that is evidence of a library boundary upstream, not a ready-made Rust integration or stability promise. [Apple package manifest](https://github.com/apple/container/blob/1.7.1/Package.swift#L53)
 
-## Missing live evidence before deciding
+## Smallest next decision and experiment
 
-1. Compare stock Apple 1.7.1 and Kina with one control plane plus two workers: node readiness, cross-node DNS, pod traffic, host reachability.
-2. Inspect the actual latest stock kernel configuration and run Cilium’s required functionality. Test kube-proxy replacement, BPF routing, L7/DNS proxying, and Hubble.
-3. Create Apple clusters with `--cni NONE`; test whether the required Cilium bootstrap can be installed without unsupported lifecycle manipulation.
-4. Install Kina’s Gateway API stacks on Apple clusters; verify programmed gateways, HTTP routing, and worker reachability.
-5. Compare explicit image imports with shared-store mode across workers, tag changes, pull policies, missing images, and teardown.
-6. Run the actual Relay environment journey against both backends using a concrete consumer contract.
-7. Test upgrade/discovery behavior: Apple explicitly excludes earlier-version clusters from its new cluster listing.
+First ask the operator which concrete outcome requires Kina beyond ordinary local Kubernetes.
+Keep retirement on equal footing with narrowing, integration and continued independent lifecycle.
+If no such outcome exists, validate the standard Apple journey before choosing retirement.
 
-Existing Kina tests inspected are explicitly pure; they are not evidence that these live comparisons have passed. [Cilium tests:7](../../kina-cli/tests/cilium_install_tests.rs#L7)
+When full Cilium eBPF is required:
+
+1. Inventory the installed runtime and existing clusters without changing them. Do not upgrade the host implicitly.
+2. Inspect the actual stock kernel configuration or BPF features against Kina's required options.
+3. If kernel capabilities permit it, create one disposable Apple cluster with one control plane and one worker, using `--cni NONE`.
+4. Through supported interfaces, test the required Cilium profile and cross-node traffic. Record the first failing step.
+5. Repeat a failed required check on existing Kina before claiming that Kina provides a working alternative.
+
+Use two workers only when the consumer needs worker-to-worker behavior.
+Add Gateway, image isolation or Relay checks only when they decide a stated consumer requirement.
+Record versions, commands, ownership and teardown evidence in GitHub. No live probe has been performed.
+Missing kernel options identify a feasibility blocker, not automatic justification for maintaining Kina.
+
+Broader addon matrices, upgrades, library extraction and adapter implementation remain behind the operator's decision.
+Existing Cilium tests are pure and do not qualify these live journeys.
 
 ## Research limits and documentation discrepancy
 
